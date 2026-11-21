@@ -170,3 +170,32 @@ def test_llm_rejects_part_without_script_keywords():
     )
     assert r.status_code == 502
     assert r.json()["error"]["code"] == "analysis_invalid_format"
+
+
+def _timing(response) -> dict[str, float]:
+    items = [item.strip().split(";dur=") for item in response.headers["Server-Timing"].split(",")]
+    return {name: float(value) for name, value in items}
+
+
+def test_llm_wait_is_recorded_separately_from_server_time():
+    parts = {"parts": [{"title": "소개", "keywords": ["발표"], "hint": "오늘 발표"}]}
+    r = _llm_app(lambda req: _chat(json.dumps(parts, ensure_ascii=False))).post(
+        "/api/v1/scripts/analyze", json={"script": "오늘 발표"}
+    )
+    timing = _timing(r)
+    assert set(timing) == {"app", "llm", "total"}
+    assert timing["total"] == pytest.approx(timing["app"] + timing["llm"], abs=0.2)
+
+
+def test_llm_wait_is_recorded_even_when_llm_fails():
+    r = _llm_app(lambda req: httpx.Response(500)).post("/api/v1/scripts/analyze", json={"script": "x"})
+    assert r.status_code == 502
+    assert "llm" in _timing(r)
+
+
+def test_requests_without_llm_report_server_time_only():
+    parts = {"parts": [{"title": "소개", "keywords": ["발표"], "hint": "오늘 발표"}]}
+    client = _llm_app(lambda req: _chat(json.dumps(parts, ensure_ascii=False)))
+    r = client.post("/api/v1/hints/pause", json={"script_sha256": "none", "text": "발표"})
+    assert r.status_code == 409
+    assert set(_timing(r)) == {"app", "total"}

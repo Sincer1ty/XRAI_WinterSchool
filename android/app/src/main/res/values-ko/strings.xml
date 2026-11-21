@@ -327,4 +327,7 @@
     <string name="presentation_settings_show">음성 인식 설정 보기</string>
     <string name="presentation_settings_hide">음성 인식 설정 접기</string>
     <string name="presentation_glass_ready_display">안경 화면 연결됨</string>
+    <string name="script_prep_timing_line">분석 시간: 전체 %1$s · AI 대기 %2$s · 서버 %3$s · 네트워크 %4$s</string>
+    <string name="presentation_timing_line">서버 응답(%1$s): 전체 %2$s · 서버 %3$s · 네트워크 %4$s</string>
+    <string name="presentation_timing_none">서버 응답 시간: 기록 없음</string>
 </resources>

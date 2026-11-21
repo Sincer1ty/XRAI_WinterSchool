@@ -3,6 +3,7 @@ package com.rokid.renewcxrlsample.activities.script
 import android.app.Application
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -10,6 +11,7 @@ import com.rokid.renewcxrlsample.script.ScriptAnalysisClient
 import com.rokid.renewcxrlsample.script.ScriptFileReader
 import com.rokid.renewcxrlsample.script.ScriptPrepRepository
 import com.rokid.renewcxrlsample.script.ScriptPrepState
+import com.rokid.renewcxrlsample.script.RequestTiming
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,7 +23,13 @@ import kotlinx.coroutines.withContext
 class ScriptPrepViewModel(application: Application) : AndroidViewModel(application) {
 
     private val controller = ScriptPrepRepository.controller
-    private val client = ScriptAnalysisClient()
+    private val _lastTiming = MutableStateFlow<RequestTiming?>(null)
+    /** 마지막 분석 요청의 AI 대기·서버 처리·네트워크 시간. */
+    val lastTiming: StateFlow<RequestTiming?> = _lastTiming.asStateFlow()
+    private val client = ScriptAnalysisClient(onTiming = { timing ->
+        Log.i("ServerTiming", timing.logLine())
+        _lastTiming.value = timing
+    })
     private val prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     val state: StateFlow<ScriptPrepState> = controller.state

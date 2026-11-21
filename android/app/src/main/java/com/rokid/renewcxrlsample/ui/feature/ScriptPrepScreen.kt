@@ -31,6 +31,7 @@ import com.rokid.renewcxrlsample.R
 import com.rokid.renewcxrlsample.activities.script.ScriptPrepViewModel
 import com.rokid.renewcxrlsample.script.PrepFailure
 import com.rokid.renewcxrlsample.script.PrepPhase
+import com.rokid.renewcxrlsample.script.RequestTiming
 import com.rokid.renewcxrlsample.script.ScriptFileReader
 import com.rokid.renewcxrlsample.script.ScriptPart
 import com.rokid.renewcxrlsample.script.ScriptPrepState
@@ -51,6 +52,7 @@ fun ScriptPrepScreen(
     val serverUrl by viewModel.serverUrl.collectAsState()
     val fileError by viewModel.fileError.collectAsState()
     val fileLoading by viewModel.fileLoading.collectAsState()
+    val timing by viewModel.lastTiming.collectAsState()
     val analyzing = state.phase == PrepPhase.Analyzing
 
     DevSampleScaffold(
@@ -69,7 +71,16 @@ fun ScriptPrepScreen(
         )
         DevStatusCard(
             title = stringResource(R.string.script_prep_status_title),
-            lines = listOf(stringResource(R.string.script_prep_status_line, phaseLabel(state.phase)))
+            lines = listOfNotNull(
+                stringResource(R.string.script_prep_status_line, phaseLabel(state.phase)),
+                timing?.let {
+                    stringResource(
+                        R.string.script_prep_timing_line, RequestTiming.formatMs(it.roundTripMs),
+                        RequestTiming.formatMs(it.llmMs), RequestTiming.formatMs(it.serverMs),
+                        RequestTiming.formatMs(it.networkMs),
+                    )
+                },
+            )
         )
 
         OutlinedTextField(

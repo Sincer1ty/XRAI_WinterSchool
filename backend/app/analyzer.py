@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections import Counter
+from contextvars import ContextVar
 from typing import Any, Protocol
 
 import httpx
@@ -22,6 +24,10 @@ from .schemas import ScriptPart
 TITLE_MAX = 30
 HINT_MAX = 30
 KEYWORDS_MAX = 5
+
+# 이번 요청에서 LLM API 응답을 기다린 시간(ms). 서버 처리 시간과 분리해 기록한다.
+# 분석기를 직접 await하는 엔드포인트에서 읽는다 (같은 컨텍스트).
+llm_wait_ms: ContextVar[float | None] = ContextVar("llm_wait_ms", default=None)
 # 안경에 한눈에 보이는 회상 단서 길이. 잘라 쓰면 원문 매칭이 깨지므로 넘으면 버린다.
 KEYWORD_LEN_MAX = 12
 
@@ -296,6 +302,7 @@ class OpenAICompatibleAnalyzer:
             payload["temperature"] = 0.2
         headers = {"Authorization": f"Bearer {s.openai_api_key}"}
 
+        started = time.perf_counter()
         try:
             async with httpx.AsyncClient(
                 timeout=s.openai_timeout_seconds, transport=self.transport
@@ -307,6 +314,8 @@ class OpenAICompatibleAnalyzer:
             raise AnalyzerError("llm_timeout", "AI 응답 시간이 초과되었습니다.", 504) from e
         except httpx.HTTPError as e:
             raise AnalyzerError("llm_unreachable", "AI 서버에 연결하지 못했습니다.") from e
+        finally:
+            llm_wait_ms.set((time.perf_counter() - started) * 1000)
 
         if resp.status_code != 200:
             explanations = {

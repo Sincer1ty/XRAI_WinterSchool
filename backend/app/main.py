@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from .analyzer import Analyzer, AnalyzerError, build_analyzer
+from .analyzer import Analyzer, AnalyzerError, build_analyzer, llm_wait_ms
 from .config import Settings, load_settings
 from .delivery_judge import judge_delivery
 from .hint_engine import hint_for_pause, match_part
@@ -28,6 +29,12 @@ from .schemas import (
 )
 
 logger = logging.getLogger("xrai.backend")
+if not logger.handlers:
+    # uvicorn 기본 설정은 앱 로거의 INFO를 출력하지 않는다. 처리 시간 기록을 콘솔에 남긴다.
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)s:     %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
 
 
 def _error(status: int, code: str, message: str) -> JSONResponse:
@@ -43,6 +50,26 @@ def create_app(settings: Settings | None = None, analyzer: Analyzer | None = Non
     # ponytail: 메모리 보관, 서버 재시작 시 사라짐. 저장·삭제 정책은 파트 5에서 확정.
     prepared: dict[str, list[ScriptPart]] = {}
 
+    @app.middleware("http")
+    async def _timing(request: Request, call_next):
+        # 서버 처리 시간과 LLM API 대기 시간을 분리해 응답 헤더·로그에 남긴다.
+        # 폰은 왕복 시간에서 total을 빼 네트워크 시간을 구한다.
+        started = time.perf_counter()
+        response = await call_next(request)
+        total = (time.perf_counter() - started) * 1000
+        llm = getattr(request.state, "llm_ms", None)
+        app_ms = total - (llm or 0)
+        timing = f"app;dur={app_ms:.1f}, total;dur={total:.1f}"
+        if llm is not None:
+            timing = f"app;dur={app_ms:.1f}, llm;dur={llm:.1f}, total;dur={total:.1f}"
+        response.headers["Server-Timing"] = timing
+        logger.info(
+            "%s %s %s server=%.1fms llm=%s",
+            request.method, request.url.path, response.status_code, app_ms,
+            "-" if llm is None else f"{llm:.1f}ms",
+        )
+        return response
+
     @app.exception_handler(RequestValidationError)
     async def _validation_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
         return _error(422, "invalid_request", "요청 형식이 올바르지 않습니다.")
@@ -52,7 +79,7 @@ def create_app(settings: Settings | None = None, analyzer: Analyzer | None = Non
         return {"status": "ok", "analyzer": analyzer.name}
 
     @app.post("/api/v1/scripts/analyze", response_model=AnalyzeResponse, responses=error_responses)
-    async def analyze_script(req: AnalyzeRequest):
+    async def analyze_script(req: AnalyzeRequest, request: Request):
         script = req.script.replace("\r\n", "\n").strip()
         if not script:
             return _error(400, "empty_script", "대본이 비어 있습니다.")
@@ -63,11 +90,14 @@ def create_app(settings: Settings | None = None, analyzer: Analyzer | None = Non
                 f"대본이 너무 깁니다 (최대 {settings.max_script_chars}자).",
             )
 
+        llm_wait_ms.set(None)
         try:
             parts = await analyzer.analyze(script)
         except AnalyzerError as e:
             logger.warning("analysis failed: %s %s", e.code, e.message)
             return _error(e.status_code, e.code, e.message)
+        finally:
+            request.state.llm_ms = llm_wait_ms.get()
 
         script_sha256 = hashlib.sha256(req.script.encode("utf-8")).hexdigest()
         prepared[script_sha256] = parts

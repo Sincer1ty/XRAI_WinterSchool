@@ -48,6 +48,7 @@ import com.rokid.renewcxrlsample.ui.design.DevStatusCard
 import com.rokid.renewcxrlsample.ui.design.FlowStepIndicator
 import com.rokid.renewcxrlsample.ui.design.PrerequisiteHint
 import com.rokid.renewcxrlsample.ui.design.SceneSectionTitle
+import com.rokid.renewcxrlsample.script.RequestTiming
 import java.util.Locale
 
 /** 발화 기준(RMS) 조정 범위. 실기기 소리 크기를 보며 맞춘다. */
@@ -65,6 +66,7 @@ fun PresentationScreen(
     val p by viewModel.presentation.collectAsState()
     val ui by viewModel.ui.collectAsState()
     val prep by viewModel.prepState.collectAsState()
+    val timing by viewModel.lastTiming.collectAsState()
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var onDevice by rememberSaveable { mutableStateOf(true) }
     val running = p.phase == PresentationPhase.Running
@@ -177,6 +179,13 @@ fun PresentationScreen(
                 lines = listOf(
                     stringResource(R.string.presentation_rms_line, rmsText(ui.rms), rmsText(ui.peakRms), rmsText(ui.speechRms)),
                     stringResource(R.string.presentation_stt_line, ui.speech.status),
+                    timing?.let {
+                        stringResource(
+                            R.string.presentation_timing_line, it.path.substringAfterLast('/'),
+                            RequestTiming.formatMs(it.roundTripMs), RequestTiming.formatMs(it.serverMs),
+                            RequestTiming.formatMs(it.networkMs),
+                        )
+                    } ?: stringResource(R.string.presentation_timing_none),
                     stringResource(R.string.presentation_partial_line, ui.speech.partial.ifBlank { none }),
                 ),
             )

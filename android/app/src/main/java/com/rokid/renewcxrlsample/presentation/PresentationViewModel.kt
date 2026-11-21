@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Application
 import android.content.pm.PackageManager
 import android.os.SystemClock
+import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -21,6 +22,7 @@ import com.rokid.sprite.aiapp.externalapp.auth.AuthorizationHelper
 import com.rokid.sprite.aiapp.externalapp.auth.GlassPermission
 import kotlinx.coroutines.Job
 import com.rokid.renewcxrlsample.script.PrepFailure
+import com.rokid.renewcxrlsample.script.RequestTiming
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -77,7 +79,13 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
 
     private val meter = Pcm16Probe()
     private val detector = SilenceDetector()
-    private val client = HintServerClient()
+    private val _lastTiming = MutableStateFlow<RequestTiming?>(null)
+    /** 마지막 서버 요청의 서버 처리·네트워크 시간. */
+    val lastTiming: StateFlow<RequestTiming?> = _lastTiming.asStateFlow()
+    private val client = HintServerClient(onTiming = { timing ->
+        Log.i(TIMING_TAG, timing.logLine())
+        _lastTiming.value = timing
+    })
     private val renderer = GlassHintRenderer { app.sharedLink }
     private val accepting = AtomicBoolean(false)
     private var audioLink: CXRLink? = null
@@ -434,6 +442,7 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
         const val STARTUP_TIMEOUT_MS = 10_000L
         /** 표시 요청 뒤 안경 갱신 응답 대기. 임시값, 실기기 응답 지연 확인 후 조정. */
         const val GLASS_ACK_TIMEOUT_MS = 2_000L
+        const val TIMING_TAG = "ServerTiming"
         /** 기존 샘플·진단과 같은 값. 16 kHz·모노·16비트 PCM으로 가정 (실기기 확인 필요). */
         const val AUDIO_CODEC_PCM = 1
     }

@@ -1,6 +1,7 @@
 package com.rokid.renewcxrlsample.presentation
 
 import com.rokid.renewcxrlsample.script.PrepFailure
+import com.rokid.renewcxrlsample.script.RequestTiming
 import com.rokid.renewcxrlsample.script.ScriptAnalysisClient
 import com.rokid.renewcxrlsample.script.ScriptAnalysisParser
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +19,8 @@ import java.net.URL
 class HintServerClient(
     private val connectTimeoutMs: Int = 3_000,
     private val readTimeoutMs: Int = 5_000,
+    /** 응답을 받은 요청의 시간 분리 기록. IO 스레드에서 호출된다. */
+    private val onTiming: (RequestTiming) -> Unit = {},
 ) {
 
     /** Empty-text matching checks both reachability and the prepared script without selecting a hint. */
@@ -68,6 +71,7 @@ class HintServerClient(
         } catch (e: IOException) {
             return@withContext Http.Fail(PrepFailure.Network)
         }
+        val startedNs = System.nanoTime()
         try {
             conn.requestMethod = "POST"
             conn.connectTimeout = connectTimeoutMs
@@ -80,6 +84,7 @@ class HintServerClient(
             val status = conn.responseCode
             val stream = if (status in 200..299) conn.inputStream else conn.errorStream
             val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+            onTiming(RequestTiming.of(path, status, ScriptAnalysisClient.elapsedMs(startedNs), conn.getHeaderField(RequestTiming.HEADER)))
             if (status == 200) Http.Ok(text) else Http.Fail(ScriptAnalysisParser.parseError(status, text))
         } catch (e: SocketTimeoutException) {
             Http.Fail(PrepFailure.Timeout)

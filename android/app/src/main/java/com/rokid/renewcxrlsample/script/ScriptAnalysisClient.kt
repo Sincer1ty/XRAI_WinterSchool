@@ -13,6 +13,8 @@ import java.net.URL
 class ScriptAnalysisClient(
     private val connectTimeoutMs: Int = 5_000,
     private val readTimeoutMs: Int = 60_000,
+    /** 응답을 받은 요청의 시간 분리 기록. IO 스레드에서 호출된다. */
+    private val onTiming: (RequestTiming) -> Unit = {},
 ) {
 
     suspend fun analyze(serverUrl: String, script: String, revision: Long): AnalysisOutcome =
@@ -36,6 +38,7 @@ class ScriptAnalysisClient(
             } catch (e: IOException) {
                 return@withContext AnalysisOutcome.Failure(PrepFailure.Network)
             }
+            val startedNs = System.nanoTime()
             try {
                 conn.requestMethod = "POST"
                 conn.connectTimeout = connectTimeoutMs
@@ -49,6 +52,7 @@ class ScriptAnalysisClient(
                 val status = conn.responseCode
                 val stream = if (status in 200..299) conn.inputStream else conn.errorStream
                 val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                onTiming(RequestTiming.of(ANALYZE_PATH, status, elapsedMs(startedNs), conn.getHeaderField(RequestTiming.HEADER)))
 
                 if (status != 200) {
                     AnalysisOutcome.Failure(ScriptAnalysisParser.parseError(status, text))
@@ -70,6 +74,8 @@ class ScriptAnalysisClient(
 
     companion object {
         const val ANALYZE_PATH = "/api/v1/scripts/analyze"
+
+        internal fun elapsedMs(startedNs: Long): Double = (System.nanoTime() - startedNs) / 1_000_000.0
 
         /** "192.168.0.10:8000" → "http://192.168.0.10:8000", 끝의 "/" 제거. */
         fun normalizeBaseUrl(raw: String): String {
