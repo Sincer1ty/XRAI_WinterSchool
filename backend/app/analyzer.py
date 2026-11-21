@@ -218,25 +218,65 @@ class OpenAICompatibleAnalyzer:
     name = "openai"
 
     def __init__(self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None):
+        self.name = settings.analyzer_provider
         self.settings = settings
         self.transport = transport
 
     async def analyze(self, script: str) -> list[ScriptPart]:
         s = self.settings
-        if not s.openai_api_key:
+        if not s.openai_api_key or not s.openai_model:
             raise AnalyzerError(
-                "analyzer_not_configured", "서버에 AI API 키가 설정되지 않았습니다.", status_code=503
+                "analyzer_not_configured", "서버에 AI API 키 또는 모델이 설정되지 않았습니다.", status_code=503
             )
 
         payload = {
             "model": s.openai_model,
-            "temperature": 0.2,
-            "response_format": {"type": "json_object"},
+            "stream": False,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT.format(max_parts=s.max_parts)},
                 {"role": "user", "content": f"발표 대본:\n\"\"\"\n{script}\n\"\"\""},
             ],
         }
+        if s.analyzer_provider == "gemini":
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "script_analysis",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "parts": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": s.max_parts,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "title": {"type": "string"},
+                                        "keywords": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                            "minItems": 1,
+                                            "maxItems": KEYWORDS_MAX,
+                                        },
+                                        "hint": {"type": "string"},
+                                    },
+                                    "required": ["title", "keywords", "hint"],
+                                    "additionalProperties": False,
+                                },
+                            },
+                        },
+                        "required": ["parts"],
+                        "additionalProperties": False,
+                    },
+                },
+            }
+        elif s.json_response_format:
+            payload["response_format"] = {"type": "json_object"}
+        # Use the model default for Gemini and gateway reasoning models.
+        if s.analyzer_provider == "openai":
+            payload["temperature"] = 0.2
         headers = {"Authorization": f"Bearer {s.openai_api_key}"}
 
         try:
@@ -252,7 +292,16 @@ class OpenAICompatibleAnalyzer:
             raise AnalyzerError("llm_unreachable", "AI 서버에 연결하지 못했습니다.") from e
 
         if resp.status_code != 200:
-            raise AnalyzerError("llm_failed", f"AI 요청이 실패했습니다 (HTTP {resp.status_code}).")
+            explanations = {
+                400: "모델의 요청 옵션·JSON 모드 지원을 확인하세요.",
+                401: "API 키를 확인하세요.",
+                403: "API 키의 모델 접근 권한을 확인하세요.",
+                404: "API 주소와 모델 ID 또는 콤보 이름을 확인하세요.",
+                429: "사용 한도 또는 제공자 용량을 확인하고 잠시 후 다시 시도하세요.",
+            }
+            detail = explanations.get(resp.status_code, "게이트웨이와 모델 제공자 상태를 확인하세요.")
+            # Do not expose upstream bodies, credentials or script text.
+            raise AnalyzerError("llm_failed", f"AI 요청이 실패했습니다 (HTTP {resp.status_code}). {detail}")
 
         try:
             content = resp.json()["choices"][0]["message"]["content"]
@@ -266,7 +315,7 @@ class OpenAICompatibleAnalyzer:
 
 
 def build_analyzer(settings: Settings) -> Analyzer:
-    if settings.analyzer_provider == "openai":
+    if settings.analyzer_provider in {"openai", "omniroute", "gemini"}:
         return OpenAICompatibleAnalyzer(settings)
     if settings.analyzer_provider == "mock":
         return MockAnalyzer(settings.max_parts)

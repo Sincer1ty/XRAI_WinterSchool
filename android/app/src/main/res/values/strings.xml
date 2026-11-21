@@ -300,4 +300,13 @@
     <string name="presentation_err_phone_mic">Speech recognition needs the phone microphone permission.</string>
     <string name="presentation_err_audio_rejected">The SDK rejected the audio start request.</string>
     <string name="presentation_err_audio_failed">Failed to start audio: %1$s</string>
+    <string name="presentation_halt_server">Server request failed. Automatic judgement stopped. Check the server and start again.</string>
+    <string name="presentation_cancel_start">Cancel preparation</string>
+    <string name="presentation_checking_server">Checking server and prepared script</string>
+    <string name="presentation_checking_audio_stt">Waiting for glasses audio and speech recognizer</string>
+    <string name="presentation_start_server_failed">Cannot reach the prepared-script service. Check the server address and connection.</string>
+    <string name="presentation_start_server_timeout">Server check timed out. Check the connection and try again.</string>
+    <string name="presentation_start_server_invalid">Unexpected server response. Check the server version and address.</string>
+    <string name="presentation_start_audio_missing">No recent glasses audio was received during preparation. Check the microphone and connection.</string>
+    <string name="presentation_start_stt_timeout">Speech recognizer did not become ready. Check the recognizer and language model.</string>
 </resources>

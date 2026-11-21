@@ -52,4 +52,18 @@ class PresentationJsonTest {
             HintServerClient.parseDelivery("s", """{"script_sha256":"s"}""") is DeliveryOutcome.Failure,
         )
     }
+    @Test
+    fun preparedScriptResponseMustMatchEmptyTextContract() {
+        assertEquals(null, HintServerClient.parsePrepared("s",
+            """{"script_sha256":"s","status":"unknown","stt_text":""}"""))
+        for (body in listOf(
+            "not json", "{}",
+            """{"script_sha256":"other","status":"unknown","stt_text":""}""",
+            """{"script_sha256":"s","status":"matched","stt_text":""}""",
+            """{"script_sha256":"s","status":"unknown","stt_text":"old speech"}"""
+        )) {
+            assertTrue(HintServerClient.parsePrepared("s", body) is
+                com.rokid.renewcxrlsample.script.PrepFailure.InvalidFormat)
+        }
+    }
 }

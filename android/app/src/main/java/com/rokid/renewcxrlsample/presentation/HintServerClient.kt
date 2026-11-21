@@ -20,6 +20,15 @@ class HintServerClient(
     private val readTimeoutMs: Int = 5_000,
 ) {
 
+    /** Empty-text matching checks both reachability and the prepared script without selecting a hint. */
+    suspend fun checkPrepared(serverUrl: String, scriptSha256: String): PrepFailure? {
+        val body = JSONObject().put("script_sha256", scriptSha256).put("text", "")
+        return when (val result = post(serverUrl, MATCH_PATH, body)) {
+            is Http.Ok -> parsePrepared(scriptSha256, result.body)
+            is Http.Fail -> result.failure
+        }
+    }
+
     suspend fun pause(serverUrl: String, request: PauseRequest): PauseOutcome {
         val body = JSONObject().put("script_sha256", request.scriptSha256).put("text", request.text)
         return when (val r = post(serverUrl, PAUSE_PATH, body)) {
@@ -82,6 +91,17 @@ class HintServerClient(
     }
 
     companion object {
+        const val MATCH_PATH = "/api/v1/parts/match"
+
+        internal fun parsePrepared(expectedSha: String, body: String): PrepFailure? = try {
+            val root = JSONObject(body)
+            if (root.opt("script_sha256") == expectedSha &&
+                root.opt("status") == "unknown" && root.opt("stt_text") == "") null
+            else PrepFailure.InvalidFormat("invalid readiness response")
+        } catch (e: JSONException) {
+            PrepFailure.InvalidFormat("readiness response is not JSON")
+        }
+
         const val PAUSE_PATH = "/api/v1/hints/pause"
         const val DELIVERY_PATH = "/api/v1/hints/delivery"
 

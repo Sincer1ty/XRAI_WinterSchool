@@ -23,7 +23,7 @@ class ScriptPart(BaseModel):
 class AnalyzeResponse(BaseModel):
     script_sha256: str = Field(..., description="분석한 대본(UTF-8)의 SHA-256 hex")
     client_revision: int | None = None
-    analyzer: str = Field(..., description="분석에 사용한 방식 (mock / openai)")
+    analyzer: str = Field(..., description="분석에 사용한 방식 (mock / openai / omniroute / gemini)")
     parts: list[ScriptPart] = Field(..., min_length=1)
 
 

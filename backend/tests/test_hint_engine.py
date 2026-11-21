@@ -69,3 +69,21 @@ def test_analyze_then_match_uses_prepared_keywords():
     r = client.post("/api/v1/parts/match", json={"script_sha256": analyzed["script_sha256"], "text": keyword})
     assert r.status_code == 200
     assert r.json()["part_index"] == 2
+
+
+def test_empty_match_checks_prepared_script_without_selecting_hint():
+    client = _client()
+    analyzed = client.post("/api/v1/scripts/analyze", json={"script": "발표 불안과 스마트 안경"}).json()
+    request = {"script_sha256": analyzed["script_sha256"], "text": ""}
+    response = client.post("/api/v1/parts/match", json=request)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["script_sha256"] == request["script_sha256"]
+    assert body["stt_text"] == ""
+    assert body["status"] == "unknown"
+    assert body["part_index"] is None
+    assert body["hint"] is None
+    # A restarted server cannot claim the old preparation still exists.
+    missing = _client().post("/api/v1/parts/match", json=request)
+    assert missing.status_code == 409
+    assert missing.json()["error"]["code"] == "script_not_prepared"

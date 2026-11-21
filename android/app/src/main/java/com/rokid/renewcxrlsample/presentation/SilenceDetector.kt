@@ -26,9 +26,20 @@ class SilenceDetector(
     private var silenceSince = 0L
     private var spokeSincePause = false
     private var speaking = false
+    private var inputRevision = 0L
+
+    /** Brief speech/input gaps also invalidate a pending hint between UI ticks. */
+    @Synchronized
+    fun revision(): Long = inputRevision
+
+    @Synchronized
+    fun isCurrentPause(revision: Long, nowMs: Long): Boolean =
+        revision == inputRevision && status(nowMs) == VoiceStatus.Silent &&
+            nowMs - silenceSince >= pauseMs
 
     @Synchronized
     fun reset() {
+        inputRevision++
         lastChunkAt = null
         silenceSince = 0L
         spokeSincePause = false
@@ -38,7 +49,11 @@ class SilenceDetector(
     @Synchronized
     fun onChunk(rms: Double, nowMs: Long) {
         val last = lastChunkAt
-        if (last == null || nowMs - last > inputLostMs) silenceSince = nowMs
+        if (last == null || nowMs - last > inputLostMs) {
+            silenceSince = nowMs
+            inputRevision++
+        }
+        if (rms >= speechRms && !speaking) inputRevision++
         lastChunkAt = nowMs
         speaking = rms >= speechRms
         if (speaking) {

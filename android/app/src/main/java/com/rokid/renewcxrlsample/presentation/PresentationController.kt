@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.asStateFlow
 enum class PresentationPhase { Idle, Running, Halted, Stopped }
 
 /** 자동 판단을 멈춘 이유. */
-enum class HaltReason { ConnectionLost, AudioStopped, SttStopped, ScriptNotPrepared }
+enum class HaltReason { ConnectionLost, AudioStopped, SttStopped, ScriptNotPrepared, ServerUnavailable }
 
 /** 서버가 고른 멈춤 힌트. */
 data class PauseHint(val text: String, val keywords: List<String>, val partIndex: Int?)
@@ -67,6 +67,7 @@ data class DeliveryRequest(
     val scriptSha256: String,
     val hint: PauseHint,
     val text: String,
+    val sequence: Long = 0,
 )
 
 /**
@@ -89,6 +90,7 @@ class PresentationController {
     private var generation = 0L
     private var nextId = 0L
     private var pendingPauseId: Long? = null
+    private var latestDeliverySequence = 0L
 
     fun start(scriptSha256: String): Boolean {
         if (_state.value.phase == PresentationPhase.Running) return false
@@ -126,17 +128,24 @@ class PresentationController {
         _state.value = cur.copy(phase = PresentationPhase.Halted, pauseInFlight = false, haltReason = reason)
     }
 
+    /** 발화 재개·입력 중단 후 이전 쉼의 응답은 표시하지 않는다. */
+    fun invalidatePause() {
+        pendingPauseId = null
+        if (_state.value.pauseInFlight) _state.value = _state.value.copy(pauseInFlight = false)
+    }
+
     /** STT 확정 문장. 힌트가 떠 있으면 전달 판단 요청을 돌려준다. */
     fun onFinal(text: String): DeliveryRequest? {
         val cur = _state.value
         val sentence = text.trim()
         if (cur.phase != PresentationPhase.Running || sentence.isEmpty()) return null
         if (sentence == cur.recentFinals.lastOrNull()) return null
+        invalidatePause()
         val recent = (cur.recentFinals + sentence).takeLast(RECENT_FINALS)
         val hint = cur.hint?.let { it.copy(spokenSince = (it.spokenSince + sentence).takeLast(RECENT_FINALS)) }
-        _state.value = cur.copy(recentFinals = recent, hint = hint)
+        _state.value = cur.copy(recentFinals = recent, hint = hint, pauseInFlight = false)
         if (hint == null) return null
-        return DeliveryRequest(generation, hint.id, cur.scriptSha256!!, hint.hint, hint.spokenSince.joinToString(" "))
+        return DeliveryRequest(generation, hint.id, cur.scriptSha256!!, hint.hint, hint.spokenSince.joinToString(" "), ++latestDeliverySequence)
     }
 
     /** 멈춤 감지. 요청할 수 있으면 멈춤 힌트 요청을 돌려준다. */
@@ -173,7 +182,7 @@ class PresentationController {
             }
             is PauseOutcome.Failure -> {
                 _state.value = cur.copy(pauseInFlight = false, note = PresentationNote(NoteKind.PauseFailed))
-                if (outcome.failure.isScriptNotPrepared()) halt(HaltReason.ScriptNotPrepared)
+                haltForFailure(outcome.failure)
                 null
             }
         }
@@ -211,7 +220,8 @@ class PresentationController {
     /** 전달 판단 응답. 전달이면 true (호출자가 안경에서 지운다). */
     fun completeDelivery(request: DeliveryRequest, outcome: DeliveryOutcome): Boolean {
         val cur = _state.value
-        if (request.generation != generation || cur.hint?.id != request.hintId) return false
+        if (request.generation != generation || cur.hint?.id != request.hintId ||
+            cur.phase != PresentationPhase.Running || request.sequence != latestDeliverySequence) return false
         return when (outcome) {
             DeliveryOutcome.Delivered -> {
                 _state.value = cur.copy(
@@ -226,7 +236,7 @@ class PresentationController {
             }
             is DeliveryOutcome.Failure -> {
                 _state.value = cur.copy(note = PresentationNote(NoteKind.DeliveryCheckFailed))
-                if (outcome.failure.isScriptNotPrepared()) halt(HaltReason.ScriptNotPrepared)
+                haltForFailure(outcome.failure)
                 false
             }
         }
@@ -238,8 +248,10 @@ class PresentationController {
         _state.value = cur.copy(note = PresentationNote(NoteKind.HideFailed))
     }
 
-    private fun PrepFailure.isScriptNotPrepared() =
-        this is PrepFailure.Server && code == "script_not_prepared"
+    private fun haltForFailure(failure: PrepFailure) {
+        halt(if (failure is PrepFailure.Server && failure.code == "script_not_prepared")
+            HaltReason.ScriptNotPrepared else HaltReason.ServerUnavailable)
+    }
 
     companion object {
         /** 서버에 보내는 최근 확정 문장 수. */

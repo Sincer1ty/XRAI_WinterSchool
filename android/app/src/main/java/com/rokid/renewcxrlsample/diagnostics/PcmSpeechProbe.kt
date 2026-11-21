@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 
 data class SpeechProbeState(
     val running: Boolean = false,
+    val ready: Boolean = false,
     val status: String = "STT 시작 전",
     val partial: String = "",
     val transcript: String = "",
@@ -91,7 +92,10 @@ class PcmSpeechProbe(
             recognizer = engine
             engine.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
-                    if (id == generation) publish("인식기 준비됨 · 외부 입력 사용 여부는 직접 확인")
+                    if (id == generation) {
+                        state = state.copy(ready = true)
+                        publish("인식기 준비됨 · 외부 입력 사용 여부는 직접 확인")
+                    }
                 }
                 override fun onBeginningOfSpeech() {}
                 override fun onRmsChanged(rmsdB: Float) {}
@@ -186,7 +190,7 @@ class PcmSpeechProbe(
         if (autoRestart && accepting && !fatal && (!counted || failuresInRow < MAX_FAILURES_IN_ROW)) {
             if (counted) failuresInRow++
             cleanup()
-            state = state.copy(status = "인식 다시 시작 중 · $message", partial = "")
+            state = state.copy(ready = false, status = "인식 다시 시작 중 · $message", partial = "")
             onState(state)
             val restartGeneration = generation
             scope.launch {
@@ -221,7 +225,7 @@ class PcmSpeechProbe(
 
     private fun finish(message: String) {
         cleanup()
-        state = state.copy(running = false, status = message, partial = "")
+        state = state.copy(running = false, ready = false, status = message, partial = "")
         onState(state)
     }
 
