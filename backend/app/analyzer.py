@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from collections import Counter
@@ -31,15 +32,26 @@ llm_wait_ms: ContextVar[float | None] = ContextVar("llm_wait_ms", default=None)
 # 안경에 한눈에 보이는 회상 단서 길이. 잘라 쓰면 원문 매칭이 깨지므로 넘으면 버린다.
 KEYWORD_LEN_MAX = 12
 
+# 다른 모델로 넘어갈 HTTP 상태. 400·401·403은 키·요청 문제라 모든 모델에서 같으므로 바로 실패한다.
+RETRYABLE_STATUS = {404, 429, 500, 502, 503, 504}
+# 남은 시간이 이보다 짧으면 다음 모델을 시도하지 않는다.
+MIN_ATTEMPT_SECONDS = 1.0
+
+logger = logging.getLogger("xrai.backend.analyzer")
+
 
 class AnalyzerError(Exception):
-    """분석 실패. code는 API 오류 응답에 그대로 쓰인다."""
+    """분석 실패. code는 API 오류 응답에 그대로 쓰인다.
 
-    def __init__(self, code: str, message: str, status_code: int = 502):
+    retryable: 다른 모델로 다시 시도하면 나아질 수 있는 실패 (혼잡·시간 초과·형식 오류 등).
+    """
+
+    def __init__(self, code: str, message: str, status_code: int = 502, retryable: bool = False):
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.retryable = retryable
 
 
 class Analyzer(Protocol):
@@ -246,14 +258,59 @@ class OpenAICompatibleAnalyzer:
         self.transport = transport
 
     async def analyze(self, script: str) -> list[ScriptPart]:
+        """주 모델부터 대체 모델 순서로 시도한다. 전체 시간은 openai_timeout_seconds 안에서 끝낸다."""
         s = self.settings
         if not s.openai_api_key or not s.openai_model:
             raise AnalyzerError(
                 "analyzer_not_configured", "서버에 AI API 키 또는 모델이 설정되지 않았습니다.", status_code=503
             )
 
+        models = [s.openai_model, *(m for m in s.fallback_models if m != s.openai_model)]
+        started = time.perf_counter()
+        deadline = started + s.openai_timeout_seconds
+        tried: list[str] = []
+        last: AnalyzerError | None = None
+        try:
+            async with httpx.AsyncClient(transport=self.transport) as client:
+                for i, model in enumerate(models):
+                    remaining = deadline - time.perf_counter()
+                    if tried and remaining < MIN_ATTEMPT_SECONDS:
+                        break
+                    is_last = i == len(models) - 1
+                    # 대체 모델이 남아 있으면 한 모델이 시간을 다 쓰지 않게 나눈다.
+                    timeout = remaining if is_last else min(s.attempt_timeout_seconds, remaining)
+                    tried.append(model)
+                    try:
+                        parts = await self._call_model(client, model, script, timeout)
+                    except AnalyzerError as e:
+                        last = e
+                        if not e.retryable or is_last:
+                            break
+                        logger.warning("model %s failed (%s), trying next model", model, e.code)
+                        continue
+                    if model != s.openai_model:
+                        logger.warning("analysis used fallback model %s (tried %s)", model, ", ".join(tried))
+                    else:
+                        logger.info("analysis used model %s", model)
+                    return parts
+        finally:
+            # 여러 모델을 시도했으면 모두 합친 AI 대기 시간.
+            llm_wait_ms.set((time.perf_counter() - started) * 1000)
+
+        assert last is not None
+        if len(tried) > 1:
+            raise AnalyzerError(
+                last.code, f"{last.message} (시도한 모델: {', '.join(tried)})", last.status_code
+            )
+        raise last
+
+    async def _call_model(
+        self, client: httpx.AsyncClient, model: str, script: str, timeout: float
+    ) -> list[ScriptPart]:
+        """모델 하나를 호출한다. 다른 모델로 넘어가도 되는 실패는 retryable=True로 알린다."""
+        s = self.settings
         payload = {
-            "model": s.openai_model,
+            "model": model,
             "stream": False,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT.format(max_parts=s.max_parts, kw_len=KEYWORD_LEN_MAX)},
@@ -302,20 +359,15 @@ class OpenAICompatibleAnalyzer:
             payload["temperature"] = 0.2
         headers = {"Authorization": f"Bearer {s.openai_api_key}"}
 
-        started = time.perf_counter()
         try:
-            async with httpx.AsyncClient(
-                timeout=s.openai_timeout_seconds, transport=self.transport
-            ) as client:
-                resp = await client.post(
-                    f"{s.openai_base_url}/chat/completions", json=payload, headers=headers
-                )
+            resp = await client.post(
+                f"{s.openai_base_url}/chat/completions", json=payload, headers=headers, timeout=timeout
+            )
         except httpx.TimeoutException as e:
-            raise AnalyzerError("llm_timeout", "AI 응답 시간이 초과되었습니다.", 504) from e
+            raise AnalyzerError("llm_timeout", "AI 응답 시간이 초과되었습니다.", 504, retryable=True) from e
         except httpx.HTTPError as e:
+            # PC 인터넷·주소 문제는 다른 모델도 같으므로 바로 실패한다.
             raise AnalyzerError("llm_unreachable", "AI 서버에 연결하지 못했습니다.") from e
-        finally:
-            llm_wait_ms.set((time.perf_counter() - started) * 1000)
 
         if resp.status_code != 200:
             explanations = {
@@ -327,17 +379,28 @@ class OpenAICompatibleAnalyzer:
             }
             detail = explanations.get(resp.status_code, "게이트웨이와 모델 제공자 상태를 확인하세요.")
             # Do not expose upstream bodies, credentials or script text.
-            raise AnalyzerError("llm_failed", f"AI 요청이 실패했습니다 (HTTP {resp.status_code}). {detail}")
+            raise AnalyzerError(
+                "llm_failed",
+                f"AI 요청이 실패했습니다 (HTTP {resp.status_code}). {detail}",
+                retryable=resp.status_code in RETRYABLE_STATUS,
+            )
 
         try:
             content = resp.json()["choices"][0]["message"]["content"]
             data = json.loads(content)
         except (ValueError, KeyError, IndexError, TypeError) as e:
-            raise AnalyzerError("analysis_invalid_format", "AI 응답을 해석하지 못했습니다.") from e
+            raise AnalyzerError(
+                "analysis_invalid_format", "AI 응답을 해석하지 못했습니다.", retryable=True
+            ) from e
 
         if not isinstance(data, dict):
-            raise AnalyzerError("analysis_invalid_format", "AI 응답이 JSON 객체가 아닙니다.")
-        return normalize_parts(data.get("parts"), s.max_parts, script)
+            raise AnalyzerError("analysis_invalid_format", "AI 응답이 JSON 객체가 아닙니다.", retryable=True)
+        try:
+            return normalize_parts(data.get("parts"), s.max_parts, script)
+        except AnalyzerError as e:
+            # 형식 오류는 모델 출력 문제라 다른 모델이 지킬 수 있다.
+            e.retryable = True
+            raise
 
 
 def build_analyzer(settings: Settings) -> Analyzer:

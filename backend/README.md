@@ -20,12 +20,27 @@ ANALYZER_PROVIDER=gemini
 GEMINI_API_KEY=<발급받은 Gemini 키>
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
 GEMINI_MODEL=gemini-3.1-flash-lite
+GEMINI_FALLBACK_MODELS=gemini-2.5-flash,gemini-3-flash-preview
+GEMINI_ATTEMPT_TIMEOUT_SECONDS=15
 GEMINI_TIMEOUT_SECONDS=45
 ~~~
 
 기본 모델은 gemini-3.1-flash-lite다. 2026-11-21 실호출에서 gemini-3.8-flash와
 gemini-flash-latest는 짧은 요청에도 30~90초 동안 응답이 없었고, gemini-3.1-flash-lite는
 대본 분석을 약 2초에 반환했다. 팀 최종 선정은 별도이며 GEMINI_MODEL로 변경할 수 있다.
+
+**대체 모델**: Gemini 모델별 혼잡은 시간에 따라 바뀐다 (같은 날 3.1-flash-lite도 503·12초 지연이 있었다).
+주 모델이 아래 이유로 실패하면 GEMINI_FALLBACK_MODELS 순서대로 다시 시도한다.
+
+| 다음 모델로 넘어감 | 바로 실패 (모든 모델에서 같음) |
+|---|---|
+| 시간 초과, HTTP 404·429·500·502·503·504, 응답 형식 오류 | HTTP 400·401·403 (키·요청), 인터넷 연결 실패 |
+
+- 대체 모델이 남아 있으면 모델 1개당 GEMINI_ATTEMPT_TIMEOUT_SECONDS(15초)까지만 기다린다.
+- GEMINI_TIMEOUT_SECONDS(45초)는 시도 전체의 한도다. 마지막 모델은 남은 시간을 모두 쓴다.
+- 모두 실패하면 마지막 오류에 "시도한 모델" 목록을 붙여 돌려준다.
+- 어떤 모델로 성공했는지 서버 콘솔에 남는다 (analysis used fallback model ...).
+- GEMINI_FALLBACK_MODELS= 처럼 비우면 주 모델만 쓴다.
 키는 PC의 .env에만 입력한다. 폰에는 PC 서버의 :8000 주소를 입력한다.
 
 3. 기존 서버를 Ctrl+C로 종료한 뒤 backend 폴더에서 재시작한다.
@@ -55,7 +70,7 @@ STT와 발표 중 키워드 판단은 기존 구현을 유지한다.
 | 502 analysis_invalid_format | 모델의 parts JSON 형식 |
 | 504 llm_timeout | API 응답 지연·시간 제한 |
 
-사용자 실행 테스트: .\.venv\Scripts\python -m pytest tests/test_gemini.py tests/test_analyze.py -q
+사용자 실행 테스트: .\.venv\Scripts\python -m pytest tests/test_gemini.py tests/test_analyze.py tests/test_fallback.py -q
 2026-11-21: 실제 Gemini 호출로 대본 분석과 폰 앱의 준비 완료까지 확인했다.
 공식 API 문서: https://aistudio.google.com/docs/openai
 사용 가능한 모델 ID 확인: GEMINI_BASE_URL 뒤에 /models를 붙여 GET 요청한다 (Authorization: Bearer 키).
