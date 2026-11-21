@@ -19,12 +19,13 @@ Google의 OpenAI 호환 엔드포인트를 기존 HTTP 분석기에 연결한다
 ANALYZER_PROVIDER=gemini
 GEMINI_API_KEY=<발급받은 Gemini 키>
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
-GEMINI_MODEL=gemini-3.8-flash
+GEMINI_MODEL=gemini-3.1-flash-lite
 GEMINI_TIMEOUT_SECONDS=45
 ~~~
 
-모델은 공식 문서의 안정 버전을 초기 예시로 설정했다. 팀 최종 선정은 별도이며,
-계정에서 사용할 모델 ID로 GEMINI_MODEL을 변경할 수 있다.
+기본 모델은 gemini-3.1-flash-lite다. 2026-11-21 실호출에서 gemini-3.8-flash와
+gemini-flash-latest는 짧은 요청에도 30~90초 동안 응답이 없었고, gemini-3.1-flash-lite는
+대본 분석을 약 2초에 반환했다. 팀 최종 선정은 별도이며 GEMINI_MODEL로 변경할 수 있다.
 키는 PC의 .env에만 입력한다. 폰에는 PC 서버의 :8000 주소를 입력한다.
 
 3. 기존 서버를 Ctrl+C로 종료한 뒤 backend 폴더에서 재시작한다.
@@ -55,9 +56,10 @@ STT와 발표 중 키워드 판단은 기존 구현을 유지한다.
 | 504 llm_timeout | API 응답 지연·시간 제한 |
 
 사용자 실행 테스트: .\.venv\Scripts\python -m pytest tests/test_gemini.py tests/test_analyze.py -q
-실제 호출·품질 확인 및 테스트 실행은 아직 수행하지 않았다.
+2026-11-21: 실제 Gemini 호출로 대본 분석과 폰 앱의 준비 완료까지 확인했다.
 공식 API 문서: https://aistudio.google.com/docs/openai
-모델 문서: https://aistudio.google.com/docs/models/gemini-3.8-flash
+사용 가능한 모델 ID 확인: GEMINI_BASE_URL 뒤에 /models를 붙여 GET 요청한다 (Authorization: Bearer 키).
+목록에 있어도 응답이 지연되는 모델이 있으므로, 바꾼 뒤에는 짧은 분석 요청으로 응답 시간을 확인한다.
 
 ## 실행 (Windows PowerShell)
 
