@@ -10,6 +10,17 @@ import org.junit.Test
 
 class PresentationControllerTest {
 
+    @Test
+    fun closedGlassesDisplayStopsAndRejectsPendingHint() {
+        val controller = running()
+        controller.onFinal("발표 불안")
+        val pending = controller.onPause()!!
+        controller.halt(HaltReason.GlassViewClosed)
+        assertEquals(PresentationPhase.Halted, controller.state.value.phase)
+        assertNull(controller.completePause(pending, PauseOutcome.Hint(hint)))
+        assertNull(controller.onPause())
+    }
+
     private val hint = PauseHint("대본 · 불안", listOf("대본", "불안"), 1)
 
     private fun running(): PresentationController = PresentationController().apply { start("sha") }

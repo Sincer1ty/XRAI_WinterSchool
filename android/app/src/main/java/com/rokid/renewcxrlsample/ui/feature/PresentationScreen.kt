@@ -14,6 +14,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -30,6 +31,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rokid.renewcxrlsample.R
+import com.rokid.renewcxrlsample.presentation.GlassOpenError
 import com.rokid.renewcxrlsample.presentation.HaltReason
 import com.rokid.renewcxrlsample.presentation.NoteKind
 import com.rokid.renewcxrlsample.presentation.PresentationNote
@@ -43,6 +45,7 @@ import com.rokid.renewcxrlsample.presentation.StartError
 import com.rokid.renewcxrlsample.presentation.VoiceStatus
 import com.rokid.renewcxrlsample.ui.design.DevSampleScaffold
 import com.rokid.renewcxrlsample.ui.design.DevStatusCard
+import com.rokid.renewcxrlsample.ui.design.FlowStepIndicator
 import com.rokid.renewcxrlsample.ui.design.PrerequisiteHint
 import com.rokid.renewcxrlsample.ui.design.SceneSectionTitle
 import java.util.Locale
@@ -55,10 +58,14 @@ private const val SPEECH_RMS_MAX = 0.05f
 fun PresentationScreen(
     viewModel: PresentationViewModel,
     onBack: () -> Unit,
+    onReviewScript: () -> Unit,
+    onConnectGlasses: () -> Unit,
     onStart: (onDevice: Boolean) -> Unit,
 ) {
     val p by viewModel.presentation.collectAsState()
     val ui by viewModel.ui.collectAsState()
+    val prep by viewModel.prepState.collectAsState()
+    var showSettings by rememberSaveable { mutableStateOf(false) }
     var onDevice by rememberSaveable { mutableStateOf(true) }
     val running = p.phase == PresentationPhase.Running
     val preparing = ui.startStage != null
@@ -70,6 +77,69 @@ fun PresentationScreen(
         showBack = true,
         onBack = onBack,
     ) {
+        FlowStepIndicator(
+            steps = listOf(
+                stringResource(R.string.presentation_step_script),
+                stringResource(R.string.presentation_step_glass),
+                stringResource(R.string.presentation_step_start),
+            ),
+            currentIndex = if (!prep.isReady) 0 else if (!ui.glassOpened) 1 else 2,
+        )
+        DevStatusCard(
+            title = stringResource(if (prep.isReady) R.string.presentation_script_done else R.string.presentation_need_prep),
+            lines = listOf(stringResource(when {
+                !prep.isReady -> R.string.presentation_flow_need_script
+                !ui.connected -> R.string.presentation_flow_need_connection
+                ui.glassOpening -> R.string.presentation_glass_opening
+                !ui.glassOpened -> R.string.presentation_flow_open_glass
+                running -> R.string.presentation_flow_running
+                preparing -> R.string.presentation_flow_preparing
+                else -> R.string.presentation_flow_ready
+            })),
+        )
+        if (!running && !preparing) {
+            TextButton(onClick = onReviewScript) {
+                Text(stringResource(R.string.presentation_review_script))
+            }
+        }
+        if (prep.isReady && !ui.connected) {
+            OutlinedButton(onClick = onConnectGlasses, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.presentation_connect_glasses))
+            }
+        }
+        ui.glassOpenError?.let {
+            PrerequisiteHint(stringResource(
+                if (it == GlassOpenError.TimedOut) R.string.presentation_glass_open_timeout
+                else R.string.presentation_glass_open_failed
+            ))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = viewModel::openGlassView,
+                enabled = prep.isReady && ui.connected && !ui.glassOpened &&
+                    !ui.glassOpening && !running && !preparing,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(stringResource(when {
+                    ui.glassOpened -> R.string.presentation_glass_connected
+                    ui.glassOpening -> R.string.presentation_glass_opening
+                    else -> R.string.presentation_open_glass_step
+                }))
+            }
+            Button(
+                onClick = { onStart(onDevice) },
+                enabled = prep.isReady && ui.connected && ui.glassOpened &&
+                    !ui.glassOpening && !running && !preparing,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(stringResource(R.string.presentation_start_step))
+            }
+        }
+        if (preparing || running || p.phase == PresentationPhase.Halted) {
+            OutlinedButton(onClick = viewModel::stop, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(if (preparing) R.string.presentation_cancel_start else R.string.presentation_stop))
+            }
+        }
         DevStatusCard(
             title = liveStatus(p, ui),
             lines = listOfNotNull(
@@ -81,20 +151,6 @@ fun PresentationScreen(
         )
         ui.startError?.let { PrerequisiteHint(startErrorText(it, ui.startErrorDetail)) }
 
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Switch(checked = onDevice, onCheckedChange = { onDevice = it }, enabled = !running && !preparing)
-            Text(stringResource(R.string.presentation_on_device))
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { onStart(onDevice) }, enabled = !running && !preparing, modifier = Modifier.weight(1f)) {
-                Text(stringResource(R.string.presentation_start))
-            }
-            OutlinedButton(
-                onClick = viewModel::stop,
-                enabled = preparing || running || p.phase == PresentationPhase.Halted,
-                modifier = Modifier.weight(1f),
-            ) { Text(stringResource(if (preparing) R.string.presentation_cancel_start else R.string.presentation_stop)) }
-        }
         PrerequisiteHint(stringResource(R.string.presentation_keep_screen))
 
         SceneSectionTitle(stringResource(R.string.presentation_hint_title))
@@ -105,21 +161,30 @@ fun PresentationScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        SceneSectionTitle(stringResource(R.string.presentation_voice_title))
-        DevStatusCard(
-            title = stringResource(R.string.presentation_voice_line, voiceLabel(ui.voice), ui.silentMs / 1000.0),
-            lines = listOf(
-                stringResource(R.string.presentation_rms_line, rmsText(ui.rms), rmsText(ui.peakRms), rmsText(ui.speechRms)),
-                stringResource(R.string.presentation_stt_line, ui.speech.status),
-                stringResource(R.string.presentation_partial_line, ui.speech.partial.ifBlank { none }),
-            ),
-        )
-        Text(stringResource(R.string.presentation_threshold_label))
-        Slider(
-            value = ui.speechRms.toFloat(),
-            onValueChange = { viewModel.setSpeechRms(it.toDouble()) },
-            valueRange = SPEECH_RMS_MIN..SPEECH_RMS_MAX,
-        )
+        TextButton(onClick = { showSettings = !showSettings }) {
+            Text(stringResource(if (showSettings) R.string.presentation_settings_hide else R.string.presentation_settings_show))
+        }
+        if (showSettings) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Switch(checked = onDevice, onCheckedChange = { onDevice = it }, enabled = !running && !preparing)
+                Text(stringResource(R.string.presentation_on_device))
+            }
+            SceneSectionTitle(stringResource(R.string.presentation_voice_title))
+            DevStatusCard(
+                title = stringResource(R.string.presentation_voice_line, voiceLabel(ui.voice), ui.silentMs / 1000.0),
+                lines = listOf(
+                    stringResource(R.string.presentation_rms_line, rmsText(ui.rms), rmsText(ui.peakRms), rmsText(ui.speechRms)),
+                    stringResource(R.string.presentation_stt_line, ui.speech.status),
+                    stringResource(R.string.presentation_partial_line, ui.speech.partial.ifBlank { none }),
+                ),
+            )
+            Text(stringResource(R.string.presentation_threshold_label))
+            Slider(
+                value = ui.speechRms.toFloat(),
+                onValueChange = { viewModel.setSpeechRms(it.toDouble()) },
+                valueRange = SPEECH_RMS_MIN..SPEECH_RMS_MAX,
+            )
+        }
     }
 }
 
@@ -193,6 +258,7 @@ private fun haltText(reason: HaltReason, ui: PresentationUiState): String = when
     HaltReason.SttStopped -> stringResource(R.string.presentation_halt_stt, ui.speech.status)
     HaltReason.ScriptNotPrepared -> stringResource(R.string.presentation_halt_script)
     HaltReason.ServerUnavailable -> stringResource(R.string.presentation_halt_server)
+    HaltReason.GlassViewClosed -> stringResource(R.string.presentation_halt_glass_closed)
 }
 
 @Composable

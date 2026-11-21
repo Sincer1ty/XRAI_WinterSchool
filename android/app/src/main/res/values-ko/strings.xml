@@ -229,7 +229,7 @@
     <string name="script_prep_part_title">파트 %1$d. %2$s</string>
     <string name="script_prep_part_keywords">키워드</string>
     <string name="script_prep_part_hint">힌트: %1$s</string>
-    <string name="script_prep_confirm">확인하고 준비 완료</string>
+    <string name="script_prep_confirm">확인하고 발표 진행하기</string>
     <string name="script_prep_ready_message">준비가 완료되었습니다. 대본을 수정하면 준비 상태가 해제됩니다.</string>
     <string name="presentation_section">발표</string>
     <string name="presentation_ready_line">대본: 준비 완료 (%1$d개 파트)</string>
@@ -300,4 +300,29 @@
     <string name="presentation_start_server_invalid">서버 확인 응답이 올바르지 않습니다. 서버 버전과 주소를 확인하세요.</string>
     <string name="presentation_start_audio_missing">준비 시간 내에 안경 음성이 수신되지 않았거나 끊겼습니다. 마이크와 연결을 확인하세요.</string>
     <string name="presentation_start_stt_timeout">인식기가 준비 시간 내에 응답하지 않았습니다. 인식기와 한국어 모델을 확인하세요.</string>
+
+    <!-- Ordered presentation preparation and display connection -->
+    <string name="presentation_step_script">대본 준비</string>
+    <string name="presentation_step_glass">안경 화면 연결</string>
+    <string name="presentation_step_start">발표 시작</string>
+    <string name="presentation_continue">발표 진행 페이지로</string>
+    <string name="presentation_script_done">대본 준비 완료</string>
+    <string name="presentation_flow_need_script">대본을 분석하고 결과를 확인하면 다음 단계로 진행할 수 있습니다.</string>
+    <string name="presentation_flow_need_connection">안경 연결 설정에서 권한을 확인하고 안경 화면 모드를 선택하세요. 연결 후 이 페이지로 이어집니다.</string>
+    <string name="presentation_flow_open_glass">먼저 아래의 ① 안경 화면 열기를 누르세요. 연결이 완료되면 발표 시작 버튼이 활성화됩니다.</string>
+    <string name="presentation_flow_ready">안경 화면이 연결되었습니다. ② 발표 시작을 눌러주세요.</string>
+    <string name="presentation_flow_preparing">발표 시작에 필요한 서버와 음성 입력을 확인하고 있습니다.</string>
+    <string name="presentation_flow_running">발표를 이어가세요. 말을 멈추면 키워드가 안경에 표시됩니다.</string>
+    <string name="presentation_review_script">대본 다시 확인</string>
+    <string name="presentation_connect_glasses">안경 연결 설정</string>
+    <string name="presentation_glass_opening">화면 연결 중…</string>
+    <string name="presentation_glass_connected">① 화면 연결 완료</string>
+    <string name="presentation_open_glass_step">① 안경 화면 열기</string>
+    <string name="presentation_start_step">② 발표 시작</string>
+    <string name="presentation_glass_open_timeout">안경 화면 연결을 확인하지 못했습니다. 안경 상태를 확인하고 화면 열기를 다시 눌러주세요.</string>
+    <string name="presentation_glass_open_failed">안경 화면을 열지 못했습니다. 안경 화면 모드로 연결됐는지 확인하고 다시 시도하세요.</string>
+    <string name="presentation_halt_glass_closed">안경 화면이 닫혀 발표를 중지했습니다. 화면을 다시 열고 발표를 시작하세요.</string>
+    <string name="presentation_settings_show">음성 인식 설정 보기</string>
+    <string name="presentation_settings_hide">음성 인식 설정 접기</string>
+    <string name="presentation_glass_ready_display">안경 화면 연결됨</string>
 </resources>

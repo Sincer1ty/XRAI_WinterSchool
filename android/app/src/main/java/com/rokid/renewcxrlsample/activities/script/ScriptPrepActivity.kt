@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import com.rokid.renewcxrlsample.presentation.PresentationActivity
 import com.rokid.renewcxrlsample.ui.feature.ScriptPrepScreen
 import com.rokid.renewcxrlsample.ui.theme.RenewCXRLSampleTheme
 
@@ -28,6 +29,10 @@ class ScriptPrepActivity : ComponentActivity() {
                 ScriptPrepScreen(
                     viewModel = viewModel,
                     onBack = { finish() },
+                    onReady = {
+                        PresentationActivity.start(this)
+                        finish()
+                    },
                     onPickFile = {
                         pickFile.launch(com.rokid.renewcxrlsample.script.ScriptFileReader.PICKER_MIME_TYPES)
                     }

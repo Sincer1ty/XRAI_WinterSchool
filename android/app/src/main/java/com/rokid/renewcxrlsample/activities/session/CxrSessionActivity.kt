@@ -92,6 +92,11 @@ class CxrSessionActivity : ComponentActivity() {
         )
         hubViewModel.init(this, sessionToken, sessionType)
         observeCxrSceneNavigation { sessionToken }
+        if (savedInstanceState == null && sessionType == CxrSessionType.CUSTOM_VIEW &&
+            intent.getBooleanExtra(PresentationActivity.EXTRA_CONTINUE_PRESENTATION, false)) {
+            intent.removeExtra(PresentationActivity.EXTRA_CONTINUE_PRESENTATION)
+            PresentationActivity.start(this)
+        }
 
         setContent {
             RenewCXRLSampleTheme {

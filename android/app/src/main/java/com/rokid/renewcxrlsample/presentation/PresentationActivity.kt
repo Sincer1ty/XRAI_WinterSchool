@@ -14,10 +14,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import com.rokid.renewcxrlsample.R
+import com.rokid.renewcxrlsample.activities.script.ScriptPrepActivity
+import com.rokid.renewcxrlsample.activities.main.MainActivity
 import com.rokid.renewcxrlsample.ui.feature.PresentationScreen
 import com.rokid.renewcxrlsample.ui.theme.RenewCXRLSampleTheme
 
-/** 발표 진행 화면. 안경 화면 모드에서 안경 화면을 연 뒤, 대본 준비가 끝나면 연다. */
+/** 대본 준비 다음 페이지: 안경 화면 열기 → 연결 확인 → 발표 시작. */
 class PresentationActivity : ComponentActivity() {
 
     private val viewModel by viewModels<PresentationViewModel>()
@@ -40,6 +42,17 @@ class PresentationActivity : ComponentActivity() {
                 PresentationScreen(
                     viewModel = viewModel,
                     onBack = { viewModel.stop(); finish() },
+                    onReviewScript = {
+                        viewModel.stop()
+                        ScriptPrepActivity.start(this)
+                    },
+                    onConnectGlasses = {
+                        viewModel.stop()
+                        startActivity(Intent(this, MainActivity::class.java).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            putExtra(EXTRA_CONTINUE_PRESENTATION, true)
+                        })
+                    },
                     onStart = { onDevice ->
                         pendingOnDevice = onDevice
                         val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
@@ -58,8 +71,12 @@ class PresentationActivity : ComponentActivity() {
     }
 
     companion object {
+        const val EXTRA_CONTINUE_PRESENTATION = "continue_presentation"
+
         fun start(context: Context) {
-            context.startActivity(Intent(context, PresentationActivity::class.java))
+            context.startActivity(Intent(context, PresentationActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            })
         }
     }
 }

@@ -238,7 +238,7 @@
     <string name="script_prep_part_title">Part %1$d. %2$s</string>
     <string name="script_prep_part_keywords">Keywords</string>
     <string name="script_prep_part_hint">Hint: %1$s</string>
-    <string name="script_prep_confirm">Confirm and get ready</string>
+    <string name="script_prep_confirm">Confirm and continue</string>
     <string name="script_prep_ready_message">Ready. Editing the script will clear the ready state.</string>
     <string name="presentation_section">Presentation</string>
     <string name="presentation_ready_line">Script: ready (%1$d parts)</string>
@@ -309,4 +309,29 @@
     <string name="presentation_start_server_invalid">Unexpected server response. Check the server version and address.</string>
     <string name="presentation_start_audio_missing">No recent glasses audio was received during preparation. Check the microphone and connection.</string>
     <string name="presentation_start_stt_timeout">Speech recognizer did not become ready. Check the recognizer and language model.</string>
+
+    <!-- Ordered presentation preparation and display connection -->
+    <string name="presentation_step_script">Script</string>
+    <string name="presentation_step_glass">Display</string>
+    <string name="presentation_step_start">Start</string>
+    <string name="presentation_continue">Continue to presentation</string>
+    <string name="presentation_script_done">Script is ready</string>
+    <string name="presentation_flow_need_script">Analyze and confirm your script to continue.</string>
+    <string name="presentation_flow_need_connection">Open connection setup, authorize the glasses, and choose custom view mode to continue here.</string>
+    <string name="presentation_flow_open_glass">First open the glasses display. Start becomes available when the display is connected.</string>
+    <string name="presentation_flow_ready">The glasses display is connected. Tap Start presentation.</string>
+    <string name="presentation_flow_preparing">Checking the server and audio input before starting.</string>
+    <string name="presentation_flow_running">Continue speaking. Keywords appear on the glasses when you pause.</string>
+    <string name="presentation_review_script">Review script</string>
+    <string name="presentation_connect_glasses">Set up glasses connection</string>
+    <string name="presentation_glass_opening">Opening display…</string>
+    <string name="presentation_glass_connected">1. Display connected</string>
+    <string name="presentation_open_glass_step">1. Open glasses display</string>
+    <string name="presentation_start_step">2. Start presentation</string>
+    <string name="presentation_glass_open_timeout">Could not confirm the display opened. Check the glasses and try again.</string>
+    <string name="presentation_glass_open_failed">Could not open the display. Check the custom view connection and retry.</string>
+    <string name="presentation_halt_glass_closed">Presentation paused because the glasses display closed. Reopen it and start again.</string>
+    <string name="presentation_settings_show">Show speech settings</string>
+    <string name="presentation_settings_hide">Hide speech settings</string>
+    <string name="presentation_glass_ready_display">Display connected</string>
 </resources>

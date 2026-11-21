@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.asStateFlow
 enum class PresentationPhase { Idle, Running, Halted, Stopped }
 
 /** 자동 판단을 멈춘 이유. */
-enum class HaltReason { ConnectionLost, AudioStopped, SttStopped, ScriptNotPrepared, ServerUnavailable }
+enum class HaltReason { ConnectionLost, AudioStopped, SttStopped, ScriptNotPrepared, ServerUnavailable, GlassViewClosed }
 
 /** 서버가 고른 멈춤 힌트. */
 data class PauseHint(val text: String, val keywords: List<String>, val partIndex: Int?)

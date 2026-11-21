@@ -11,6 +11,15 @@ import org.json.JSONObject
  */
 class GlassHintRenderer(private val linkProvider: () -> CXRLink?) {
 
+    fun open(message: String): Boolean {
+        val link = linkProvider() ?: return false
+        return runCatching {
+            if (link.customViewIsOpen()) return true
+            val result: Any? = link.customViewOpen(buildView(message))
+            result != false
+        }.getOrDefault(false)
+    }
+
     fun show(text: String): Boolean = send(text)
 
     fun hide(): Boolean = send("")
@@ -27,6 +36,25 @@ class GlassHintRenderer(private val linkProvider: () -> CXRLink?) {
     companion object {
         /** SessionHubViewModel이 연 템플릿의 문구 노드 id. */
         const val TEXT_VIEW_ID = "textView"
+
+        /** Existing glasses layout with a visible connection confirmation. */
+        fun buildView(message: String): String = JSONObject()
+            .put("type", "LinearLayout")
+            .put("props", JSONObject()
+                .put("id", "root")
+                .put("layout_width", "match_parent").put("layout_height", "match_parent")
+                .put("marginTop", "160dp").put("marginBottom", "80dp")
+                .put("backgroundColor", "#FF000000")
+                .put("orientation", "vertical").put("gravity", "center"))
+            .put("children", JSONArray().put(JSONObject()
+                .put("type", "TextView")
+                .put("props", JSONObject()
+                    .put("id", TEXT_VIEW_ID).put("text", message)
+                    .put("layout_width", "match_parent").put("layout_height", "wrap_content")
+                    .put("textColor", "#FFFFFF").put("textSize", "24sp")
+                    .put("gravity", "center").put("textStyle", "bold")
+                    .put("paddingStart", "16dp").put("paddingEnd", "16dp"))))
+            .toString()
 
         /** JSONObject로 만들어 따옴표·역슬래시·줄바꿈이 들어간 힌트도 깨지지 않게 한다. */
         fun buildUpdate(text: String): String = JSONArray()

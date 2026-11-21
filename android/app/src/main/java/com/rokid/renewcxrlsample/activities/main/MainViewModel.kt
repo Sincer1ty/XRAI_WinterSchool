@@ -125,11 +125,12 @@ class MainViewModel : BaseViewModel() {
         _infoText.value = tr(R.string.auth_success)
     }
 
-    fun toSession(context: Activity, type: CxrSessionType) {
+    fun toSession(context: Activity, type: CxrSessionType, continuePresentation: Boolean = false) {
         if (token.isBlank()) return
         context.startActivity(
             Intent(context, CxrSessionActivity::class.java).apply {
                 putExtra(CONSTANT.EXTRA_TOKEN, token)
+                putExtra(com.rokid.renewcxrlsample.presentation.PresentationActivity.EXTRA_CONTINUE_PRESENTATION, continuePresentation)
                 putExtra(CONSTANT.EXTRA_SESSION_TYPE, type.wireValue)
             }
         )

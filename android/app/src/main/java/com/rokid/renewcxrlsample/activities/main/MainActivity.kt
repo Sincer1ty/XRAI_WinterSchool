@@ -25,6 +25,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rokid.renewcxrlsample.R
 import com.rokid.renewcxrlsample.activities.script.ScriptPrepActivity
+import com.rokid.renewcxrlsample.presentation.PresentationActivity
 import com.rokid.renewcxrlsample.app.CONSTANT
 import com.rokid.renewcxrlsample.app.CONSTANT.REQUEST_CODE_AUTH
 import com.rokid.renewcxrlsample.session.CxrSessionType
@@ -67,7 +68,11 @@ class MainActivity : ComponentActivity() {
                     },
                     checkRokidAppInstalled = { viewModel.isRokidAppInstalled(this) },
                     checkAuth = { viewModel.checkAuth(this@MainActivity) },
-                    toCustomView = { viewModel.toSession(this@MainActivity, CxrSessionType.CUSTOM_VIEW) },
+                    toCustomView = {
+                        viewModel.toSession(this@MainActivity, CxrSessionType.CUSTOM_VIEW,
+                            intent.getBooleanExtra(PresentationActivity.EXTRA_CONTINUE_PRESENTATION, false))
+                        intent.removeExtra(PresentationActivity.EXTRA_CONTINUE_PRESENTATION)
+                    },
                     toCustomApp = { viewModel.toSession(this@MainActivity, CxrSessionType.CUSTOM_APP) },
                     toScriptPrep = { ScriptPrepActivity.start(this@MainActivity) }
                 )
@@ -75,6 +80,11 @@ class MainActivity : ComponentActivity() {
         }
         viewModel.isRokidAppInstalled(this)
         intent.getStringExtra(CONSTANT.EXTRA_TOKEN)?.let { viewModel.restoreSessionToken(it) }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
     }
 
     override fun onActivityResult(

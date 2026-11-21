@@ -9,6 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.rokid.cxr.link.CXRLink
 import com.rokid.cxr.link.callbacks.IAudioStreamCbk
+import com.rokid.renewcxrlsample.R
 import com.rokid.renewcxrlsample.app.CXRLApplication
 import com.rokid.renewcxrlsample.diagnostics.Pcm16Probe
 import com.rokid.renewcxrlsample.diagnostics.PcmSpeechProbe
@@ -34,9 +35,13 @@ enum class StartError {
 }
 
 enum class StartStage { Server, AudioAndStt }
+enum class GlassOpenError { Failed, TimedOut }
 
 data class PresentationUiState(
     val connected: Boolean = false,
+    val glassOpened: Boolean = false,
+    val glassOpening: Boolean = false,
+    val glassOpenError: GlassOpenError? = null,
     val startStage: StartStage? = null,
     val receiving: Boolean = false,
     val voice: VoiceStatus = VoiceStatus.Waiting,
@@ -62,6 +67,7 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
     private val app = application as CXRLApplication
     val controller = PresentationController()
     val presentation: StateFlow<PresentationState> = controller.state
+    val prepState = ScriptPrepRepository.controller.state
 
     private val _ui = MutableStateFlow(PresentationUiState())
     val ui: StateFlow<PresentationUiState> = _ui.asStateFlow()
@@ -83,6 +89,8 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
     private var preparedRevision = 0L
     private var preparedSha = ""
     private var startupDeadlineMs = 0L
+    private var glassOpenDeadlineMs = 0L
+    private var openingLink: CXRLink? = null
     @Volatile private var mediaGeneration = 0L
 
     private val speech: PcmSpeechProbe = PcmSpeechProbe(
@@ -139,6 +147,8 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
                 .collect { connected ->
                     _ui.value = _ui.value.copy(connected = connected)
                     if (!connected) {
+                        openingLink = null
+                        _ui.value = _ui.value.copy(glassOpened = false, glassOpening = false)
                         if (startGate.preparing) failStart(StartError.NotConnected, null)
                         else controller.halt(HaltReason.ConnectionLost)
                     }
@@ -157,6 +167,7 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
             while (true) {
                 delay(TICK_MS)
                 val now = SystemClock.elapsedRealtime()
+                refreshGlassView(now)
                 if (startGate.preparing && _ui.value.startStage == StartStage.AudioAndStt) {
                     finishPreparation(now)
                 }
@@ -191,6 +202,46 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
                     hintRemainingMs = controller.remainingMs(now),
                 )
             }
+        }
+    }
+
+    fun openGlassView() {
+        if (_ui.value.glassOpening || startGate.preparing ||
+            presentation.value.phase == PresentationPhase.Running) return
+        val link = app.sharedLink
+        if (!prepState.value.isReady || !_ui.value.connected || !app.isSessionReady || link == null) return
+        _ui.value = _ui.value.copy(glassOpenError = null, startError = null, startErrorDetail = null)
+        openingLink = link
+        glassOpenDeadlineMs = SystemClock.elapsedRealtime() + 10_000
+        _ui.value = _ui.value.copy(glassOpening = true)
+        if (!renderer.open(app.getString(R.string.presentation_glass_ready_display))) {
+            openingLink = null
+            _ui.value = _ui.value.copy(glassOpening = false, glassOpenError = GlassOpenError.Failed)
+        }
+        refreshGlassView(SystemClock.elapsedRealtime())
+    }
+
+    private fun refreshGlassView(now: Long) {
+        val link = app.sharedLink
+        val opened = _ui.value.connected && app.isSessionReady && link != null &&
+            runCatching { link.customViewIsOpen() }.getOrDefault(false)
+        val waiting = _ui.value.glassOpening
+        val invalidLink = openingLink != null && openingLink !== link
+        val timedOut = waiting && !opened && now >= glassOpenDeadlineMs
+        val finished = opened || invalidLink || timedOut || !_ui.value.connected
+        _ui.value = _ui.value.copy(
+            glassOpened = opened,
+            glassOpening = waiting && !finished,
+            glassOpenError = when {
+                opened -> null
+                invalidLink -> GlassOpenError.Failed
+                timedOut -> GlassOpenError.TimedOut
+                else -> _ui.value.glassOpenError
+            },
+        )
+        if (finished) openingLink = null
+        if (!opened && presentation.value.phase == PresentationPhase.Running) {
+            controller.halt(HaltReason.GlassViewClosed)
         }
     }
 

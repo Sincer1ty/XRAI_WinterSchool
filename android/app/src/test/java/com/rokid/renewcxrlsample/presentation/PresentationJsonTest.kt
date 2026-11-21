@@ -1,11 +1,24 @@
 package com.rokid.renewcxrlsample.presentation
 
 import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PresentationJsonTest {
+
+    @Test
+    fun openedGlassesLayoutAcceptsTheExistingHintUpdateContract() {
+        val view = JSONObject(GlassHintRenderer.buildView("안경 화면 연결됨"))
+        val textNode = view.getJSONArray("children").getJSONObject(0)
+        val update = JSONArray(GlassHintRenderer.buildUpdate("발표 불안")).getJSONObject(0)
+        assertEquals("LinearLayout", view.getString("type"))
+        assertEquals("TextView", textNode.getString("type"))
+        assertEquals(update.getString("id"), textNode.getJSONObject("props").getString("id"))
+        assertEquals("안경 화면 연결됨", textNode.getJSONObject("props").getString("text"))
+    }
+
 
     @Test
     fun glassUpdateEscapesQuotesBackslashAndNewline() {

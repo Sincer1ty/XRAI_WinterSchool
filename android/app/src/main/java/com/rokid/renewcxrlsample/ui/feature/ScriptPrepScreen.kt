@@ -36,6 +36,7 @@ import com.rokid.renewcxrlsample.script.ScriptPart
 import com.rokid.renewcxrlsample.script.ScriptPrepState
 import com.rokid.renewcxrlsample.ui.design.DevSampleScaffold
 import com.rokid.renewcxrlsample.ui.design.DevStatusCard
+import com.rokid.renewcxrlsample.ui.design.FlowStepIndicator
 import com.rokid.renewcxrlsample.ui.design.PrerequisiteHint
 import com.rokid.renewcxrlsample.ui.design.SceneSectionTitle
 
@@ -44,6 +45,7 @@ fun ScriptPrepScreen(
     viewModel: ScriptPrepViewModel,
     onBack: () -> Unit,
     onPickFile: () -> Unit,
+    onReady: () -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
     val serverUrl by viewModel.serverUrl.collectAsState()
@@ -57,6 +59,14 @@ fun ScriptPrepScreen(
         showBack = true,
         onBack = onBack
     ) {
+        FlowStepIndicator(
+            steps = listOf(
+                stringResource(R.string.presentation_step_script),
+                stringResource(R.string.presentation_step_glass),
+                stringResource(R.string.presentation_step_start),
+            ),
+            currentIndex = 0,
+        )
         DevStatusCard(
             title = stringResource(R.string.script_prep_status_title),
             lines = listOf(stringResource(R.string.script_prep_status_line, phaseLabel(state.phase)))
@@ -146,19 +156,25 @@ fun ScriptPrepScreen(
                     PrerequisiteHint(stringResource(R.string.script_prep_review_hint))
                 }
                 analysis.parts.forEach { PartCard(it) }
-                ReadyControls(state = state, onConfirm = viewModel::confirmReady)
+                ReadyControls(state = state, onConfirm = {
+                    viewModel.confirmReady()
+                    if (viewModel.state.value.isReady) onReady()
+                }, onContinue = onReady)
             }
         }
     }
 }
 
 @Composable
-private fun ReadyControls(state: ScriptPrepState, onConfirm: () -> Unit) {
+private fun ReadyControls(state: ScriptPrepState, onConfirm: () -> Unit, onContinue: () -> Unit) {
     if (state.phase == PrepPhase.Reviewing) {
         Button(modifier = Modifier.fillMaxWidth(), onClick = onConfirm) {
             Text(stringResource(R.string.script_prep_confirm))
         }
     } else if (state.isReady) {
+        Button(modifier = Modifier.fillMaxWidth(), onClick = onContinue) {
+            Text(stringResource(R.string.presentation_continue))
+        }
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
@@ -268,6 +284,6 @@ fun PresentationStartSection(
         Text(stringResource(R.string.presentation_open_prep))
     }
     Button(modifier = Modifier.fillMaxWidth(), onClick = onStart, enabled = prepState.isReady) {
-        Text(stringResource(R.string.presentation_start))
+        Text(stringResource(R.string.presentation_continue))
     }
 }
