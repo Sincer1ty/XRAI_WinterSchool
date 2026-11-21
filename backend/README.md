@@ -7,13 +7,65 @@
   발표 중에는 LLM을 호출하지 않고 준비 단계의 키워드만 씁니다.
 - **파트 4. 전달 판단** — 힌트를 띄운 뒤의 문장으로 힌트 내용을 말했는지 판단합니다 (폰이 숨김).
 
+## 파트 1: Gemini API 키 연결
+
+폰 → PC FastAPI(:8000) → Google Gemini → 파트·키워드·힌트 검증 → 폰.
+Google의 OpenAI 호환 엔드포인트를 기존 HTTP 분석기에 연결한다.
+
+1. https://aistudio.google.com/apikey 에서 Gemini API 키를 준비한다.
+2. backend/.env의 GEMINI_API_KEY에 키를 입력한다. 기존 파일을 예제로 덮어쓰지 않는다.
+
+~~~dotenv
+ANALYZER_PROVIDER=gemini
+GEMINI_API_KEY=<발급받은 Gemini 키>
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+GEMINI_MODEL=gemini-3.8-flash
+GEMINI_TIMEOUT_SECONDS=45
+~~~
+
+모델은 공식 문서의 안정 버전을 초기 예시로 설정했다. 팀 최종 선정은 별도이며,
+계정에서 사용할 모델 ID로 GEMINI_MODEL을 변경할 수 있다.
+키는 PC의 .env에만 입력한다. 폰에는 PC 서버의 :8000 주소를 입력한다.
+
+3. 기존 서버를 Ctrl+C로 종료한 뒤 backend 폴더에서 재시작한다.
+터미널 환경 변수는 .env보다 우선하므로 이전 제공자 설정을 제거한다.
+
+~~~powershell
+Remove-Item Env:ANALYZER_PROVIDER -ErrorAction SilentlyContinue
+.\.venv\Scripts\python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+~~~
+
+4. 폰에서 대본을 다시 분석하고 파트·키워드·힌트를 확인한다.
+서버 재시작 시 이전 분석 결과는 메모리에서 사라진다.
+분석 버튼을 누르면 대본이 Gemini로 전송된다.
+
+/health의 analyzer=gemini는 설정 선택을 뜻하며 실제 API 호출 성공을 뜻하지 않는다.
+키·모델이 없으면 503 오류로 처리하며 다른 제공자나 mock으로 자동 전환하지 않는다.
+Gemini 요청에는 parts JSON 스키마를 보내며, 응답도 기존 규칙으로 검증한다.
+STT와 발표 중 키워드 판단은 기존 구현을 유지한다.
+
+| 오류 | 확인할 항목 |
+|---|---|
+| 503 analyzer_not_configured | GEMINI_API_KEY·GEMINI_MODEL 누락 |
+| 502 llm_unreachable | PC 인터넷 연결·API 주소 |
+| 502 llm_failed, HTTP 400/401/403 | 키 유효성·모델 권한·요청 옵션 |
+| 502 llm_failed, HTTP 404 | 모델 ID·API 주소 |
+| 502 llm_failed, HTTP 429 | 호출 한도·할당량 |
+| 502 analysis_invalid_format | 모델의 parts JSON 형식 |
+| 504 llm_timeout | API 응답 지연·시간 제한 |
+
+사용자 실행 테스트: .\.venv\Scripts\python -m pytest tests/test_gemini.py tests/test_analyze.py -q
+실제 호출·품질 확인 및 테스트 실행은 아직 수행하지 않았다.
+공식 API 문서: https://aistudio.google.com/docs/openai
+모델 문서: https://aistudio.google.com/docs/models/gemini-3.8-flash
+
 ## 실행 (Windows PowerShell)
 
 ```powershell
 cd backend
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
-copy .env.example .env        # 필요하면 값 수정
+if (-not (Test-Path .env)) { Copy-Item .env.example .env } # 기존 키 보존
 .\.venv\Scripts\python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -22,11 +74,22 @@ copy .env.example .env        # 필요하면 값 수정
 - 동작 확인: 브라우저에서 `http://localhost:8000/health`, API 문서는 `http://localhost:8000/docs`.
 - 테스트: `.\.venv\Scripts\python -m pytest -q`
 
+## 팀원 노트북에서 실행
+
+- 저장소를 받은 뒤 위 실행 절차로 가상환경과 의존성을 준비한다.
+- .env.example을 .env로 복사하고 본인의 GEMINI_API_KEY를 입력한다.
+  실제 .env는 Git에서 제외되므로 저장소를 내려받아도 키는 전달되지 않는다.
+- 폰의 PC 서버 주소를 해당 노트북의 IPv4 주소와 8000 포트로 변경한다.
+- 구현 범위와 미검증 항목은 [구현하기](../docs/구현하기.md)를 따른다.
+  서버 시작과 실제 Gemini 분석 성공은 별도로 확인한다.
+
 ## 분석 방식
 
 | `ANALYZER_PROVIDER` | 동작 |
 |---|---|
-| `mock` (기본) | API 키 없이 규칙으로 분석. 마크다운 `#` 제목이 있으면 제목 단위, 없으면 빈 줄 문단 단위로 나눕니다. |
+| `gemini` | Gemini API 직접 호출 (GEMINI_API_KEY, GEMINI_MODEL). .env.example의 선택값. |
+| `omniroute` | 기존 게이트웨이 연결 옵션 (OMNIROUTE_*). |
+| `mock` (.env 미설정 기본) | API 키 없이 규칙으로 분석. 마크다운 `#` 제목이 있으면 제목 단위, 없으면 빈 줄 문단 단위로 나눕니다. |
 | `openai` | OpenAI 호환 Chat Completions API 호출 (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`). |
 
 제공받은 AI API가 OpenAI 호환이 아니면 `app/analyzer.py`에 분석기를 추가하고 `build_analyzer`에 연결합니다.
@@ -68,7 +131,7 @@ copy .env.example .env        # 필요하면 값 수정
 | 422 | `invalid_request` | 요청 JSON 형식 오류 |
 | 502 | `analysis_invalid_format` | AI 응답이 약속한 형식이 아님 |
 | 502 | `llm_failed` / `llm_unreachable` | AI 호출 실패 |
-| 503 | `analyzer_not_configured` | `openai` 방식인데 API 키 없음 |
+| 503 | `analyzer_not_configured` | 선택한 LLM의 API 키 또는 모델 누락 |
 | 504 | `llm_timeout` | AI 응답 시간 초과 |
 
 ### `POST /api/v1/parts/match` · `POST /api/v1/hints/pause`

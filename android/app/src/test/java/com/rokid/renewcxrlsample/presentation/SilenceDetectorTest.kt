@@ -65,6 +65,22 @@ class SilenceDetectorTest {
     }
 
     @Test
+    fun briefSpeechInvalidatesOldPauseEvenAfterAnotherSilence() {
+        val d = SilenceDetector()
+        d.feed(0, 500, loud)
+        d.feed(520, 3_600, quiet)
+        assertTrue(d.tick(3_600))
+        val old = d.revision()
+        assertTrue(d.isCurrentPause(old, 3_600))
+        d.onChunk(loud, 3_620)
+        d.feed(3_640, 7_000, quiet)
+        assertFalse(d.isCurrentPause(old, 7_000))
+        assertTrue(d.isCurrentPause(d.revision(), 7_000))
+        d.reset()
+        assertFalse(d.isCurrentPause(old, 7_000))
+    }
+
+    @Test
     fun thresholdIsAdjustable() {
         val d = SilenceDetector(speechRms = 0.2)
         d.feed(0, 1_000, loud) // 0.1 < 0.2 → 발화 아님

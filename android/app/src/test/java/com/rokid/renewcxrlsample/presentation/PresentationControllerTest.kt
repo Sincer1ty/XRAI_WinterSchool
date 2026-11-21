@@ -120,6 +120,8 @@ class PresentationControllerTest {
         assertFalse(c.completeDelivery(d, DeliveryOutcome.Failure(PrepFailure.Timeout)))
         assertNotNull(c.state.value.hint)
         assertEquals(NoteKind.DeliveryCheckFailed, c.state.value.note?.kind)
+        assertEquals(PresentationPhase.Halted, c.state.value.phase)
+        assertEquals(HaltReason.ServerUnavailable, c.state.value.haltReason)
     }
 
     @Test
@@ -183,6 +185,50 @@ class PresentationControllerTest {
         assertTrue(c.stop())
         assertFalse("중복 종료", c.stop())
         assertFalse(running().stop())
+    }
+
+    @Test
+    fun newFinalInvalidatesPendingPause() {
+        val c = running()
+        c.onFinal("이전 파트")
+        val request = c.onPause()!!
+        c.onFinal("새 파트 설명")
+        assertNull(c.completePause(request, PauseOutcome.Hint(hint)))
+        assertFalse(c.state.value.pauseInFlight)
+        assertNotNull(c.onPause())
+    }
+
+    @Test
+    fun resumedSpeechInvalidatesPauseBeforeFinalArrives() {
+        val c = running()
+        c.onFinal("설명")
+        val request = c.onPause()!!
+        c.invalidatePause()
+        assertNull(c.completePause(request, PauseOutcome.Hint(hint)))
+        assertNull(c.state.value.hint)
+    }
+
+    @Test
+    fun olderDeliveryCannotHideHintOrStopNewerJudgement() {
+        val (c, _) = withHint()
+        val older = c.onFinal("대본")!!
+        val newer = c.onFinal("추가 설명")!!
+        assertFalse(c.completeDelivery(older, DeliveryOutcome.Delivered))
+        assertFalse(c.completeDelivery(older, DeliveryOutcome.Failure(PrepFailure.Network)))
+        assertEquals(PresentationPhase.Running, c.state.value.phase)
+        assertTrue(c.completeDelivery(newer, DeliveryOutcome.Delivered))
+    }
+
+    @Test
+    fun networkFailureHaltsAndDiscardsLaterResponse() {
+        val c = running()
+        c.onFinal("설명")
+        val request = c.onPause()!!
+        c.completePause(request, PauseOutcome.Failure(PrepFailure.Network))
+        assertEquals(PresentationPhase.Halted, c.state.value.phase)
+        assertEquals(HaltReason.ServerUnavailable, c.state.value.haltReason)
+        assertNull(c.completePause(request, PauseOutcome.Hint(hint)))
+        assertNull(c.onPause())
     }
 
     private companion object {

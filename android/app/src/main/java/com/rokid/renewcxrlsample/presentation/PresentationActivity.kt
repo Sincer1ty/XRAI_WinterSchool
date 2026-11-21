@@ -26,7 +26,7 @@ class PresentationActivity : ComponentActivity() {
     private val microphonePermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) viewModel.start(pendingOnDevice)
+        if (granted && !isFinishing && !isDestroyed) viewModel.start(pendingOnDevice)
         else Toast.makeText(this, R.string.presentation_mic_denied, Toast.LENGTH_LONG).show()
     }
 
@@ -39,7 +39,7 @@ class PresentationActivity : ComponentActivity() {
             RenewCXRLSampleTheme {
                 PresentationScreen(
                     viewModel = viewModel,
-                    onBack = { finish() },
+                    onBack = { viewModel.stop(); finish() },
                     onStart = { onDevice ->
                         pendingOnDevice = onDevice
                         val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
@@ -50,6 +50,11 @@ class PresentationActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onDestroy() {
+        if (isFinishing) viewModel.stop()
+        super.onDestroy()
     }
 
     companion object {

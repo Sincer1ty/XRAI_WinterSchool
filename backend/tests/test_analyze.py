@@ -27,6 +27,10 @@ SCRIPT_MD = """# 문제 소개
 
 def _settings(**kw):
     kw.setdefault("analyzer_provider", "mock")
+    # Keep unit fixtures independent of the local gateway .env.
+    kw.setdefault("openai_model", "test-model")
+    kw.setdefault("openai_base_url", "https://example.test/v1")
+    kw.setdefault("json_response_format", True)
     return replace(load_settings(), **kw)
 
 

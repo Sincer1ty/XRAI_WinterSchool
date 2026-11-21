@@ -17,6 +17,8 @@ import com.rokid.renewcxrlsample.link.CxrLinkConnectionHub
 import com.rokid.renewcxrlsample.script.ScriptPrepRepository
 import com.rokid.sprite.aiapp.externalapp.auth.AuthorizationHelper
 import com.rokid.sprite.aiapp.externalapp.auth.GlassPermission
+import kotlinx.coroutines.Job
+import com.rokid.renewcxrlsample.script.PrepFailure
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,10 +30,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** 발표를 시작하지 못한 이유. */
 enum class StartError {
     ScriptNotReady, NoServer, NotConnected, NoGlassMic, GlassViewClosed, NoPhoneMic, AudioRejected, AudioFailed,
+    ServerUnavailable, ServerTimeout, ScriptMissing, ServerInvalid, SttFailed, AudioMissing, SttTimeout,
 }
+
+enum class StartStage { Server, AudioAndStt }
 
 data class PresentationUiState(
     val connected: Boolean = false,
+    val startStage: StartStage? = null,
     val receiving: Boolean = false,
     val voice: VoiceStatus = VoiceStatus.Waiting,
     val rms: Double = 0.0,
@@ -69,8 +75,17 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
     private var serverUrl = ""
     /** 멈춤은 감지됐지만 보낼 인식 문장이 아직 없음. 다시 말하기 시작하면 해제. 메인 스레드 전용. */
     private var pauseWaitingForText = false
+    private var waitingPauseRevision = 0L
+    private var audioStartedAtMs = 0L
+    private val startGate = PresentationStartGate()
+    private var startJob: Job? = null
+    private var startTicket = 0L
+    private var preparedRevision = 0L
+    private var preparedSha = ""
+    private var startupDeadlineMs = 0L
+    @Volatile private var mediaGeneration = 0L
 
-    private val speech = PcmSpeechProbe(
+    private val speech: PcmSpeechProbe = PcmSpeechProbe(
         application,
         viewModelScope,
         onState = { s -> _ui.value = _ui.value.copy(speech = s) },
@@ -79,27 +94,42 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
             // 멈춤이 먼저 감지되고 확정 문장이 늦게 온 경우, 그 문장으로 힌트를 요청한다.
             if (pauseWaitingForText) {
                 pauseWaitingForText = false
-                controller.onPause()?.let(::requestPause)
+                if (detector.isCurrentPause(waitingPauseRevision, SystemClock.elapsedRealtime())) {
+                    controller.onPause()?.let(::requestPause)
+                }
             }
         },
         autoRestart = true,
-        onStopped = { controller.halt(HaltReason.SttStopped) },
+        onStopped = { message ->
+            if (startGate.preparing) failStart(StartError.SttFailed, message)
+            else controller.halt(HaltReason.SttStopped)
+        },
     )
 
-    private val audioCallback = object : IAudioStreamCbk {
+    private fun audioCallback(mediaId: Long) = object : IAudioStreamCbk {
         override fun onAudioReceived(data: ByteArray?, offset: Int, length: Int) {
-            if (!accepting.get()) return
+            if (!accepting.get() || mediaId != mediaGeneration) return
             val pcm = meter.accept(data, offset, length, SystemClock.elapsedRealtime()) ?: return
             detector.onChunk(meter.snapshot().rms, SystemClock.elapsedRealtime())
             speech.feed(pcm)
         }
 
         override fun onAudioError(errorCode: Int, errorInfo: String?) {
-            viewModelScope.launch { if (accepting.get()) controller.halt(HaltReason.AudioStopped) }
+            viewModelScope.launch {
+                if (accepting.get() && mediaId == mediaGeneration) {
+                    if (startGate.preparing) failStart(StartError.AudioFailed, errorInfo)
+                    else controller.halt(HaltReason.AudioStopped)
+                }
+            }
         }
 
         override fun onAudioStreamStateChanged(started: Boolean) {
-            viewModelScope.launch { if (!started && accepting.get()) controller.halt(HaltReason.AudioStopped) }
+            viewModelScope.launch {
+                if (!started && accepting.get() && mediaId == mediaGeneration) {
+                    if (startGate.preparing) failStart(StartError.AudioMissing, null)
+                    else controller.halt(HaltReason.AudioStopped)
+                }
+            }
         }
     }
 
@@ -108,23 +138,47 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
             combine(CxrLinkConnectionHub.cxrlConnected, CxrLinkConnectionHub.btConnected) { a, b -> a && b }
                 .collect { connected ->
                     _ui.value = _ui.value.copy(connected = connected)
-                    if (!connected) controller.halt(HaltReason.ConnectionLost)
+                    if (!connected) {
+                        if (startGate.preparing) failStart(StartError.NotConnected, null)
+                        else controller.halt(HaltReason.ConnectionLost)
+                    }
                 }
         }
         // 오류로 자동 판단이 멈추면 음성 처리도 멈춘다.
         viewModelScope.launch {
-            controller.state.collect { if (it.phase == PresentationPhase.Halted) stopMedia() }
+            controller.state.collect {
+                if (it.phase == PresentationPhase.Halted) {
+                    startGate.cancel()
+                    stopMedia()
+                }
+            }
         }
         viewModelScope.launch {
             while (true) {
                 delay(TICK_MS)
                 val now = SystemClock.elapsedRealtime()
-                if (accepting.get() && detector.tick(now)) {
+                if (startGate.preparing && _ui.value.startStage == StartStage.AudioAndStt) {
+                    finishPreparation(now)
+                }
+                val voice = detector.status(now)
+                if (!startGate.preparing && accepting.get() && (voice == VoiceStatus.InputLost ||
+                        (voice == VoiceStatus.Waiting && now - audioStartedAtMs > SilenceDetector.DEFAULT_INPUT_LOST_MS))) {
+                    controller.halt(HaltReason.AudioStopped)
+                }
+                if (presentation.value.phase == PresentationPhase.Running && accepting.get() && detector.tick(now)) {
                     val request = controller.onPause()
                     if (request != null) requestPause(request)
-                    else pauseWaitingForText = presentation.value.let { it.hint == null && !it.pauseInFlight }
+                    else {
+                        pauseWaitingForText = presentation.value.let {
+                            it.phase == PresentationPhase.Running && it.hint == null && !it.pauseInFlight
+                        }
+                        waitingPauseRevision = detector.revision()
+                    }
                 }
-                if (detector.status(now) == VoiceStatus.Speaking) pauseWaitingForText = false
+                if (voice != VoiceStatus.Silent) {
+                    pauseWaitingForText = false
+                    controller.invalidatePause()
+                }
                 // 5초가 지난 키워드는 전달 판단과 관계없이 내린다.
                 if (controller.expireIfDue(now) && !renderer.hide()) controller.onHideFailed()
                 val m = meter.snapshot()
@@ -145,71 +199,145 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
         _ui.value = _ui.value.copy(speechRms = value)
     }
 
-    /** 발표 시작. 휴대폰 마이크 권한(STT 인식기 요구)은 Activity가 먼저 받는다. */
-    fun start(onDevice: Boolean) {
-        if (presentation.value.phase == PresentationPhase.Running) return
+    private fun localStartError(): StartError? {
         val prep = ScriptPrepRepository.controller.state.value
-        val analysis = prep.analysis
         val link = app.sharedLink
-        val error = when {
-            !prep.isReady || analysis == null -> StartError.ScriptNotReady
+        return when {
+            !prep.isReady || prep.analysis == null -> StartError.ScriptNotReady
             prep.analyzedServerUrl.isNullOrBlank() -> StartError.NoServer
             !_ui.value.connected || !app.isSessionReady || link == null -> StartError.NotConnected
             !AuthorizationHelper.hasGlassPermission(GlassPermission.MICROPHONE) -> StartError.NoGlassMic
-            runCatching { link?.customViewIsOpen() != true }.getOrDefault(true) -> StartError.GlassViewClosed
+            runCatching { link.customViewIsOpen() != true }.getOrDefault(true) -> StartError.GlassViewClosed
             ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) !=
                 PackageManager.PERMISSION_GRANTED -> StartError.NoPhoneMic
             else -> null
         }
-        if (error != null || analysis == null || link == null) {
+    }
+
+    private fun preparationUnchanged(): Boolean {
+        val prep = ScriptPrepRepository.controller.state.value
+        return prep.isReady && prep.revision == preparedRevision &&
+            prep.analysis?.scriptSha256 == preparedSha && prep.analyzedServerUrl == serverUrl
+    }
+
+    /** 준비 확인이 모두 끝나기 전에는 controller를 Running으로 전환하지 않는다. */
+    fun start(onDevice: Boolean) {
+        if (startGate.preparing || presentation.value.phase == PresentationPhase.Running) return
+        stop()
+        val error = localStartError()
+        if (error != null) {
             _ui.value = _ui.value.copy(startError = error, startErrorDetail = null)
             return
         }
-        serverUrl = prep.analyzedServerUrl.orEmpty()
-        _ui.value = _ui.value.copy(startError = null, startErrorDetail = null)
-
-        meter.reset()
-        detector.reset()
-        controller.start(analysis.scriptSha256)
-        renderer.hide() // 연결 확인용 문구를 지우고 빈 화면으로 시작한다.
-        try {
-            audioLink = link
-            link.setCXRAudioCbk(audioCallback)
-            accepting.set(true)
-            val result: Any? = link.startAudioStream(AUDIO_CODEC_PCM)
-            if (result == false) {
-                failStart(StartError.AudioRejected, null)
-                return
+        val prep = ScriptPrepRepository.controller.state.value
+        preparedSha = prep.analysis!!.scriptSha256
+        preparedRevision = prep.revision
+        serverUrl = prep.analyzedServerUrl!!
+        val ticket = startGate.begin() ?: return
+        startTicket = ticket
+        _ui.value = _ui.value.copy(startStage = StartStage.Server, startError = null, startErrorDetail = null)
+        val requestedUrl = serverUrl
+        val requestedSha = preparedSha
+        startJob = viewModelScope.launch {
+            val failure = client.checkPrepared(requestedUrl, requestedSha)
+            if (!startGate.isCurrent(ticket)) return@launch
+            if (failure != null) {
+                val reason = when (failure) {
+                    PrepFailure.Timeout -> StartError.ServerTimeout
+                    is PrepFailure.InvalidFormat -> StartError.ServerInvalid
+                    is PrepFailure.Server -> if (failure.code == "script_not_prepared")
+                        StartError.ScriptMissing else StartError.ServerUnavailable
+                    else -> StartError.ServerUnavailable
+                }
+                failStart(reason, null)
+                return@launch
             }
-        } catch (e: Exception) {
-            failStart(StartError.AudioFailed, e.message)
+            val localError = localStartError()
+            if (!preparationUnchanged() || localError != null) {
+                failStart(localError ?: StartError.ScriptNotReady, null)
+                return@launch
+            }
+            if (!startGate.serverConfirmed(ticket)) return@launch
+            val link = app.sharedLink ?: return@launch failStart(StartError.NotConnected, null)
+            audioLink = link
+            pauseWaitingForText = false
+            meter.reset()
+            detector.reset()
+            _ui.value = _ui.value.copy(startStage = StartStage.AudioAndStt)
+            startupDeadlineMs = SystemClock.elapsedRealtime() + STARTUP_TIMEOUT_MS
+            try {
+                val mediaId = ++mediaGeneration
+                link.setCXRAudioCbk(audioCallback(mediaId))
+                audioStartedAtMs = SystemClock.elapsedRealtime()
+                accepting.set(true)
+                val result: Any? = link.startAudioStream(AUDIO_CODEC_PCM)
+                if (result == false) {
+                    failStart(StartError.AudioRejected, null)
+                    return@launch
+                }
+            } catch (e: Exception) {
+                failStart(StartError.AudioFailed, e.message)
+                return@launch
+            }
+            if (startGate.isCurrent(ticket)) speech.start(onDevice)
+        }
+    }
+
+    private fun finishPreparation(nowMs: Long) {
+        val localError = localStartError()
+        if (!preparationUnchanged() || localError != null || app.sharedLink !== audioLink) {
+            failStart(localError ?: if (app.sharedLink !== audioLink) StartError.NotConnected
+                else StartError.ScriptNotReady, null)
             return
         }
-        speech.start(onDevice)
+        val voice = detector.status(nowMs)
+        val hasAudio = accepting.get() && (voice == VoiceStatus.Speaking || voice == VoiceStatus.Silent)
+        val sttReady = _ui.value.speech.running && _ui.value.speech.ready
+        if (startGate.complete(startTicket, hasAudio, sttReady)) {
+            // Preparation speech is not presentation content or a pause trigger.
+            detector.reset()
+            audioStartedAtMs = nowMs
+            controller.start(preparedSha)
+            _ui.value = _ui.value.copy(startStage = null)
+            if (!renderer.hide()) controller.onHideFailed()
+        } else if (nowMs >= startupDeadlineMs) {
+            failStart(if (!hasAudio) StartError.AudioMissing else StartError.SttTimeout, null)
+        }
     }
 
     fun stop() {
+        startGate.cancel()
+        startJob?.cancel()
+        startJob = null
         val hadHint = controller.stop()
         stopMedia()
-        if (hadHint) renderer.hide()
+        _ui.value = _ui.value.copy(startStage = null)
+        if (hadHint && !renderer.hide()) controller.onHideFailed()
     }
 
     private fun failStart(error: StartError, detail: String?) {
-        controller.stop()
-        stopMedia()
+        stop()
         _ui.value = _ui.value.copy(startError = error, startErrorDetail = detail)
     }
 
     private fun stopMedia() {
+        mediaGeneration++
+        pauseWaitingForText = false
         if (accepting.getAndSet(false)) runCatching { audioLink?.stopAudioStream() }
-        // 이미 멈춘 인식기를 다시 취소하면 오류 안내가 "STT 중지"로 덮인다.
+        // A restart keeps running=true. Preserve an already stopped recognizer error.
         if (_ui.value.speech.running) speech.cancel()
     }
 
     private fun requestPause(request: PauseRequest) {
+        val pauseRevision = detector.revision()
+        val requestServerUrl = serverUrl
         viewModelScope.launch {
-            val outcome = client.pause(serverUrl, request)
-            val shown = controller.completePause(request, outcome) ?: return@launch
+            val outcome = client.pause(requestServerUrl, request)
+            val currentOutcome = if (outcome is PauseOutcome.Hint &&
+                !detector.isCurrentPause(pauseRevision, SystemClock.elapsedRealtime())) {
+                PauseOutcome.NoHint("pause_ended")
+            } else outcome
+            val shown = controller.completePause(request, currentOutcome) ?: return@launch
             val sent = renderer.show(keywordLine(shown.hint.keywords))
             controller.onHintRendered(shown.id, sent, SystemClock.elapsedRealtime())
         }
@@ -241,6 +369,8 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
 
     private companion object {
         const val TICK_MS = 200L
+        /** Resource startup deadline; separate from the presentation silence policy. */
+        const val STARTUP_TIMEOUT_MS = 10_000L
         /** 기존 샘플·진단과 같은 값. 16 kHz·모노·16비트 PCM으로 가정 (실기기 확인 필요). */
         const val AUDIO_CODEC_PCM = 1
     }

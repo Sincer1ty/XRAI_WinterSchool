@@ -38,6 +38,7 @@ import com.rokid.renewcxrlsample.presentation.PresentationState
 import com.rokid.renewcxrlsample.presentation.PresentationUiState
 import com.rokid.renewcxrlsample.presentation.keywordLine
 import com.rokid.renewcxrlsample.presentation.PresentationViewModel
+import com.rokid.renewcxrlsample.presentation.StartStage
 import com.rokid.renewcxrlsample.presentation.StartError
 import com.rokid.renewcxrlsample.presentation.VoiceStatus
 import com.rokid.renewcxrlsample.ui.design.DevSampleScaffold
@@ -60,6 +61,7 @@ fun PresentationScreen(
     val ui by viewModel.ui.collectAsState()
     var onDevice by rememberSaveable { mutableStateOf(true) }
     val running = p.phase == PresentationPhase.Running
+    val preparing = ui.startStage != null
     val none = stringResource(R.string.presentation_none)
 
     DevSampleScaffold(
@@ -73,25 +75,25 @@ fun PresentationScreen(
             lines = listOfNotNull(
                 // 시작 전·종료 상태에서는 제목이 이미 단계 표시이므로 반복하지 않는다.
                 if (running) stringResource(R.string.presentation_phase_line, phaseLabel(p.phase)) else null,
-                p.note?.let { noteText(it) },
+                p.note?.takeUnless { preparing }?.let { noteText(it) },
                 p.haltReason?.takeIf { p.phase == PresentationPhase.Halted }?.let { haltText(it, ui) },
             ),
         )
         ui.startError?.let { PrerequisiteHint(startErrorText(it, ui.startErrorDetail)) }
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Switch(checked = onDevice, onCheckedChange = { onDevice = it }, enabled = !running)
+            Switch(checked = onDevice, onCheckedChange = { onDevice = it }, enabled = !running && !preparing)
             Text(stringResource(R.string.presentation_on_device))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { onStart(onDevice) }, enabled = !running, modifier = Modifier.weight(1f)) {
+            Button(onClick = { onStart(onDevice) }, enabled = !running && !preparing, modifier = Modifier.weight(1f)) {
                 Text(stringResource(R.string.presentation_start))
             }
             OutlinedButton(
                 onClick = viewModel::stop,
-                enabled = running || p.phase == PresentationPhase.Halted,
+                enabled = preparing || running || p.phase == PresentationPhase.Halted,
                 modifier = Modifier.weight(1f),
-            ) { Text(stringResource(R.string.presentation_stop)) }
+            ) { Text(stringResource(if (preparing) R.string.presentation_cancel_start else R.string.presentation_stop)) }
         }
         PrerequisiteHint(stringResource(R.string.presentation_keep_screen))
 
@@ -146,6 +148,10 @@ private fun GlassPreview(text: String?) {
 /** 지금 무슨 일이 일어나는지 한 줄로: 듣는 중 → 공백 감지 → 키워드 표시 중(남은 초). */
 @Composable
 private fun liveStatus(p: PresentationState, ui: PresentationUiState): String {
+    ui.startStage?.let {
+        return stringResource(if (it == StartStage.Server) R.string.presentation_checking_server
+            else R.string.presentation_checking_audio_stt)
+    }
     if (p.phase != PresentationPhase.Running) {
         return stringResource(R.string.presentation_phase_line, phaseLabel(p.phase))
     }
@@ -186,6 +192,7 @@ private fun haltText(reason: HaltReason, ui: PresentationUiState): String = when
     HaltReason.AudioStopped -> stringResource(R.string.presentation_halt_audio)
     HaltReason.SttStopped -> stringResource(R.string.presentation_halt_stt, ui.speech.status)
     HaltReason.ScriptNotPrepared -> stringResource(R.string.presentation_halt_script)
+    HaltReason.ServerUnavailable -> stringResource(R.string.presentation_halt_server)
 }
 
 @Composable
@@ -217,4 +224,11 @@ private fun startErrorText(error: StartError, detail: String?): String = when (e
     StartError.NoPhoneMic -> stringResource(R.string.presentation_err_phone_mic)
     StartError.AudioRejected -> stringResource(R.string.presentation_err_audio_rejected)
     StartError.AudioFailed -> stringResource(R.string.presentation_err_audio_failed, detail.orEmpty())
+    StartError.ServerUnavailable -> stringResource(R.string.presentation_start_server_failed)
+    StartError.ServerTimeout -> stringResource(R.string.presentation_start_server_timeout)
+    StartError.ScriptMissing -> stringResource(R.string.presentation_halt_script)
+    StartError.ServerInvalid -> stringResource(R.string.presentation_start_server_invalid)
+    StartError.SttFailed -> stringResource(R.string.presentation_halt_stt, detail.orEmpty())
+    StartError.AudioMissing -> stringResource(R.string.presentation_start_audio_missing)
+    StartError.SttTimeout -> stringResource(R.string.presentation_start_stt_timeout)
 }

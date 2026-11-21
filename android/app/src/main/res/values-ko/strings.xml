@@ -291,4 +291,13 @@
     <string name="presentation_err_phone_mic">음성 인식에 휴대폰 마이크 권한이 필요합니다.</string>
     <string name="presentation_err_audio_rejected">SDK가 음성 수신 시작을 거부했습니다.</string>
     <string name="presentation_err_audio_failed">음성 수신 시작 실패: %1$s</string>
+    <string name="presentation_halt_server">서버 요청에 실패해 자동 판단을 중지했습니다. 서버 상태를 확인한 뒤 다시 시작하세요.</string>
+    <string name="presentation_cancel_start">준비 취소</string>
+    <string name="presentation_checking_server">서버 연결·대본 준비 확인 중</string>
+    <string name="presentation_checking_audio_stt">안경 음성 수신·인식기 준비 확인 중</string>
+    <string name="presentation_start_server_failed">대본 확인 서버에 연결하지 못했습니다. 주소와 서버 연결을 확인하세요.</string>
+    <string name="presentation_start_server_timeout">서버 확인 시간이 초과됐습니다. 연결을 확인하고 다시 시작하세요.</string>
+    <string name="presentation_start_server_invalid">서버 확인 응답이 올바르지 않습니다. 서버 버전과 주소를 확인하세요.</string>
+    <string name="presentation_start_audio_missing">준비 시간 내에 안경 음성이 수신되지 않았거나 끊겼습니다. 마이크와 연결을 확인하세요.</string>
+    <string name="presentation_start_stt_timeout">인식기가 준비 시간 내에 응답하지 않았습니다. 인식기와 한국어 모델을 확인하세요.</string>
 </resources>
