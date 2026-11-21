@@ -29,7 +29,7 @@ def test_config_isolated_from_other_providers(gemini_settings, monkeypatch):
     cfg = gemini_settings()
     assert cfg.openai_api_key == ""
     assert cfg.openai_base_url == "https://generativelanguage.googleapis.com/v1beta/openai"
-    assert cfg.openai_model == "gemini-3.8-flash"
+    assert cfg.openai_model == "gemini-3.1-flash-lite"
     assert build_analyzer(cfg).name == "gemini"
     monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
     monkeypatch.setenv("GEMINI_MODEL", "selected-gemini-model")
@@ -44,7 +44,7 @@ def test_gemini_request_and_parts_contract(gemini_settings, monkeypatch):
         assert str(request.url) == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         assert request.headers["authorization"] == "Bearer test-gemini-key"
         payload = json.loads(request.content)
-        assert payload["model"] == "gemini-3.8-flash"
+        assert payload["model"] == "gemini-3.1-flash-lite"
         assert payload["stream"] is False
         assert "temperature" not in payload
         fmt = payload["response_format"]

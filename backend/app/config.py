@@ -27,7 +27,7 @@ def load_settings() -> Settings:
     defaults = {
         "openai": ("OPENAI", "https://api.openai.com/v1", "gpt-4o-mini"),
         "omniroute": ("OMNIROUTE", "http://127.0.0.1:20128/v1", ""),
-        "gemini": ("GEMINI", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-3.8-flash"),
+        "gemini": ("GEMINI", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-3.1-flash-lite"),
     }
     prefix, default_url, default_model = defaults.get(provider, defaults["openai"])
     base_url = os.getenv(
