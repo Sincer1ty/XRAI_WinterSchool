@@ -23,6 +23,8 @@ data class ScriptPrepState(
     val phase: PrepPhase = PrepPhase.Editing,
     val analysis: ScriptAnalysis? = null,
     val failure: PrepFailure? = null,
+    /** 분석을 요청한 서버 주소. 발표 중 요청도 대본이 준비된 이 서버로 보낸다. */
+    val analyzedServerUrl: String? = null,
 ) {
     val isScriptBlank: Boolean get() = script.isBlank()
     val canSubmit: Boolean get() = !isScriptBlank && phase != PrepPhase.Analyzing
@@ -81,13 +83,34 @@ class ScriptPrepController {
 
     /** 분석 시작. 빈 대본이거나 이미 분석 중이면 null. */
     @Synchronized
-    fun beginAnalysis(): AnalysisTicket? {
+    fun beginAnalysis(serverUrl: String = ""): AnalysisTicket? {
         val cur = _state.value
         if (!cur.canSubmit) return null
         val ticket = AnalysisTicket(++nextRequestId, cur.revision, cur.script)
         activeRequestId = ticket.requestId
-        _state.value = cur.copy(phase = PrepPhase.Analyzing, analysis = null, failure = null)
+        _state.value = cur.copy(
+            phase = PrepPhase.Analyzing,
+            analysis = null,
+            failure = null,
+            analyzedServerUrl = serverUrl.trim(),
+        )
         return ticket
+    }
+
+    /**
+     * 서버 주소가 바뀌면 이전 서버에서 만든 분석·준비 상태를 해제한다 (서버는 대본을 메모리에만 보관).
+     * 해제했으면 true.
+     */
+    @Synchronized
+    fun onServerUrlChanged(url: String): Boolean {
+        val cur = _state.value
+        val bound = cur.phase == PrepPhase.Analyzing ||
+            cur.phase == PrepPhase.Reviewing ||
+            cur.phase == PrepPhase.Ready
+        if (!bound || sameServer(cur.analyzedServerUrl, url)) return false
+        activeRequestId = null
+        _state.value = cur.copy(phase = PrepPhase.Editing, analysis = null, failure = null, analyzedServerUrl = null)
+        return true
     }
 
     /** 결과 반영. 현재 대본의 최신 요청이 아니면 버리고 false를 돌려준다. */
@@ -121,6 +144,12 @@ class ScriptPrepController {
             }
         }
         return true
+    }
+
+    /** "pc:8000", "http://pc:8000/" 처럼 표기만 다른 주소는 같은 서버로 본다. */
+    private fun sameServer(a: String?, b: String): Boolean {
+        fun norm(u: String) = runCatching { ScriptAnalysisClient.normalizeBaseUrl(u) }.getOrDefault(u.trim())
+        return a != null && norm(a) == norm(b)
     }
 
     /** 진행 중인 분석을 취소하고 편집 상태로 돌아간다. 이후 도착하는 결과는 버려진다. */

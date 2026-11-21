@@ -47,6 +47,7 @@ class ScriptPrepViewModel(application: Application) : AndroidViewModel(applicati
     fun onServerUrlChanged(url: String) {
         _serverUrl.value = url
         prefs.edit { putString(KEY_SERVER_URL, url.trim()) }
+        if (controller.onServerUrlChanged(url)) analysisJob?.cancel()
     }
 
     fun loadFile(uri: Uri) {
@@ -69,8 +70,8 @@ class ScriptPrepViewModel(application: Application) : AndroidViewModel(applicati
 
     fun analyze() {
         if (_serverUrl.value.isBlank()) return
-        val ticket = controller.beginAnalysis() ?: return
         val url = _serverUrl.value
+        val ticket = controller.beginAnalysis(url) ?: return
         analysisJob = viewModelScope.launch {
             val outcome = client.analyze(url, ticket.script, ticket.revision)
             // 대본이 그사이 바뀌었으면 controller가 결과를 버린다.

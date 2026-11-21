@@ -159,6 +159,25 @@ class ScriptPrepControllerTest {
     }
 
     @Test
+    fun changingServerUrlClearsReadyStateButSameUrlKeepsIt() {
+        val c = ScriptPrepController()
+        c.editScript("대본")
+        val t = c.beginAnalysis(" http://pc:8000 ")!!
+        c.completeAnalysis(t, analysisFor(t))
+        c.confirmReady()
+        assertEquals("http://pc:8000", c.state.value.analyzedServerUrl)
+
+        assertFalse(c.onServerUrlChanged("http://pc:8000"))
+        assertFalse("끝의 / 나 http:// 생략은 같은 서버", c.onServerUrlChanged("pc:8000/"))
+        assertTrue(c.state.value.isReady)
+
+        assertTrue(c.onServerUrlChanged("http://other:8000"))
+        assertFalse(c.state.value.isReady)
+        assertNull(c.state.value.analysis)
+        assertEquals(PrepPhase.Editing, c.state.value.phase)
+    }
+
+    @Test
     fun loadedFileNameIsKeptWhileEditing() {
         val c = ScriptPrepController()
         c.loadScript("파일 대본", "talk.md")

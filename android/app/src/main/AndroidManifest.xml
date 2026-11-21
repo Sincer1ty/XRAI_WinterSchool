@@ -3,11 +3,18 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MANAGE_MEDIA" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
 
     <application
         android:name=".app.CXRLApplication"
@@ -20,6 +27,11 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.RenewCXRLSample"
         android:usesCleartextTraffic="true">
+        <activity
+            android:name=".diagnostics.GlassDiagnosticsActivity"
+            android:exported="false"
+            android:label="안경 음성·STT 진단"
+            android:theme="@style/Theme.RenewCXRLSample" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -39,6 +51,11 @@
             android:exported="false"
             android:label="@string/script_prep_title"
             android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.RenewCXRLSample" />
+        <activity
+            android:name=".presentation.PresentationActivity"
+            android:exported="false"
+            android:label="@string/presentation_title"
             android:theme="@style/Theme.RenewCXRLSample" />
         <activity
             android:name=".activities.main.MainActivity"
