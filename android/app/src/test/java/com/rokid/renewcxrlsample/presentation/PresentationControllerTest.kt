@@ -85,14 +85,80 @@ class PresentationControllerTest {
     }
 
     @Test
-    fun pauseNeedsRecentSpeechAndUsesLastThreeSentences() {
+    fun pauseSendsSentenceHistoryNotOnlyLastThree() {
         val c = running()
         assertNull("인식 문장이 없으면 요청하지 않음", c.onPause())
         listOf("하나", "둘", "셋", "넷").forEach { c.onFinal(it) }
         val req = c.onPause()!!
-        assertEquals("둘\n셋\n넷", req.text)
+        assertEquals("파트 앞부분에서 말한 키워드도 세도록 모두 보냄", "하나\n둘\n셋\n넷", req.text)
         assertEquals("sha", req.scriptSha256)
+        assertEquals("화면용 최근 문장은 3개 유지", listOf("둘", "셋", "넷"), c.state.value.recentFinals)
         assertNull("응답 전 중복 멈춤 요청 금지", c.onPause())
+    }
+
+    @Test
+    fun pauseHistoryIsCapped() {
+        val c = running()
+        (1..25).forEach { c.onFinal("문장$it") }
+        val lines = c.onPause()!!.text.split("\n")
+        assertEquals(PresentationController.PAUSE_HISTORY, lines.size)
+        assertEquals("문장25", lines.last())
+    }
+
+    @Test
+    fun pauseUsesPendingPartialWithoutWaitingForFinal() {
+        val c = running()
+        assertEquals("확정 문장이 없어도 중간 결과로 요청", "발표 불안이", c.onPause(partial = " 발표 불안이 ")!!.text)
+
+        val c2 = running()
+        c2.onFinal("첫 문장")
+        assertEquals("첫 문장\n둘째 문장", c2.onPause(partial = "둘째 문장")!!.text)
+
+        val c3 = running()
+        c3.onFinal("같은 문장")
+        assertEquals("이미 확정된 중간 결과는 중복으로 넣지 않음", "같은 문장", c3.onPause(partial = "같은 문장")!!.text)
+    }
+
+    @Test
+    fun onlyDisplayedKeywordsAreJudged() {
+        val c = running()
+        c.onFinal("문장")
+        val req = c.onPause()!!
+        val five = PauseHint("a · b · c · d · e", listOf("일", "이", "삼", "사", "오"), 1)
+        val shown = c.completePause(req, PauseOutcome.Hint(five))!!
+        assertEquals("안경에 보이는 3개만 판단 대상", listOf("일", "이", "삼"), shown.hint.keywords)
+        c.onHintRendered(shown.id, sent = true, nowMs = SHOWN_AT)
+        assertEquals(listOf("일", "이", "삼"), c.onFinal("사 오")!!.hint.keywords)
+        assertFalse("안 보이는 키워드는 중간 결과로도 숨기지 않음", c.onPartial("사 오"))
+    }
+
+    @Test
+    fun partialWithShownKeywordHidesImmediately() {
+        val (c, _) = withHint()
+        assertFalse(c.onPartial("음 그러니까"))
+        assertNotNull(c.state.value.hint)
+        assertTrue("띄어쓰기가 달라도 확정 문장 전에 숨김", c.onPartial("그러니까 대 본을"))
+        assertNull(c.state.value.hint)
+        assertEquals(NoteKind.Delivered, c.state.value.note?.kind)
+        assertNull("숨긴 뒤 확정 문장은 전달 판단 요청 안 함", c.onFinal("그러니까 대본을"))
+    }
+
+    @Test
+    fun partialStartedBeforeShowCountsOnlyNewWords() {
+        val c = running()
+        c.onFinal("발표를 시작합니다")
+        val shown = c.completePause(c.onPause()!!, PauseOutcome.Hint(hint))!!
+        c.onHintRendered(shown.id, sent = true, nowMs = SHOWN_AT, partialAtShow = "대본")
+        assertFalse("표시 전부터 있던 말은 전달로 보지 않음", c.onPartial("대본 그래서"))
+        assertTrue(c.onPartial("대본 그래서 불안"))
+    }
+
+    @Test
+    fun partialBeforeShowRequestSucceedsIsIgnored() {
+        val c = running()
+        c.onFinal("문장")
+        c.completePause(c.onPause()!!, PauseOutcome.Hint(hint))
+        assertFalse("표시 요청 결과 전에는 숨기지 않음", c.onPartial("대본"))
     }
 
     @Test

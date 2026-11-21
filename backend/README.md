@@ -20,8 +20,13 @@ ANALYZER_PROVIDER=gemini
 GEMINI_API_KEY=<발급받은 Gemini 키>
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
 GEMINI_MODEL=gemini-3.1-flash-lite
+GEMINI_FALLBACK_MODEL=gemini-2.5-flash
 GEMINI_TIMEOUT_SECONDS=45
 ~~~
+
+일시적 실패(429·500·502·503·504·연결 오류)는 같은 모델로 한 번 더 시도하고, 그래도 실패하면
+GEMINI_FALLBACK_MODEL로 마지막 시도를 한다. 모든 시도를 합쳐 GEMINI_TIMEOUT_SECONDS 안에서 끝난다.
+2026-11-22 실호출에서 gemini-3.1-flash-lite가 같은 요청에 503과 성공을 번갈아 반환했다.
 
 기본 모델은 gemini-3.1-flash-lite다. 2026-11-21 실호출에서 gemini-3.8-flash와
 gemini-flash-latest는 짧은 요청에도 30~90초 동안 응답이 없었고, gemini-3.1-flash-lite는

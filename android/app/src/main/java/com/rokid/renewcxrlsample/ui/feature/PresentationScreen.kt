@@ -55,6 +55,10 @@ import java.util.Locale
 private const val SPEECH_RMS_MIN = 0.001f
 private const val SPEECH_RMS_MAX = 0.05f
 
+/** 멈춤 판단 시간 조정 범위 (0.5초 단위). */
+private const val PAUSE_MS_MIN = 1_000f
+private const val PAUSE_MS_MAX = 5_000f
+
 @Composable
 fun PresentationScreen(
     viewModel: PresentationViewModel,
@@ -188,6 +192,12 @@ fun PresentationScreen(
                     } ?: stringResource(R.string.presentation_timing_none),
                     stringResource(R.string.presentation_partial_line, ui.speech.partial.ifBlank { none }),
                 ),
+            )
+            Text(stringResource(R.string.presentation_pause_label, ui.pauseMs / 1000.0))
+            Slider(
+                value = ui.pauseMs.toFloat(),
+                onValueChange = { viewModel.setPauseMs((it / 500).toLong() * 500) },
+                valueRange = PAUSE_MS_MIN..PAUSE_MS_MAX,
             )
             Text(stringResource(R.string.presentation_threshold_label))
             Slider(

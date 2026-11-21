@@ -20,16 +20,21 @@ class Settings:
     max_script_chars: int
     max_parts: int
     json_response_format: bool = True
+    # 기본 모델이 일시적 실패를 반복할 때 마지막으로 시도하는 모델. 빈 값이면 쓰지 않는다.
+    fallback_model: str = ""
 
 
 def load_settings() -> Settings:
     provider = os.getenv("ANALYZER_PROVIDER", "mock").strip().lower()
     defaults = {
-        "openai": ("OPENAI", "https://api.openai.com/v1", "gpt-4o-mini"),
-        "omniroute": ("OMNIROUTE", "http://127.0.0.1:20128/v1", ""),
-        "gemini": ("GEMINI", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-3.1-flash-lite"),
+        "openai": ("OPENAI", "https://api.openai.com/v1", "gpt-4o-mini", ""),
+        "omniroute": ("OMNIROUTE", "http://127.0.0.1:20128/v1", "", ""),
+        "gemini": (
+            "GEMINI", "https://generativelanguage.googleapis.com/v1beta/openai",
+            "gemini-3.1-flash-lite", "gemini-2.5-flash",
+        ),
     }
-    prefix, default_url, default_model = defaults.get(provider, defaults["openai"])
+    prefix, default_url, default_model, default_fallback = defaults.get(provider, defaults["openai"])
     base_url = os.getenv(
         f"{prefix}_BASE_URL",
         default_url,
@@ -54,4 +59,5 @@ def load_settings() -> Settings:
         max_script_chars=int(os.getenv("MAX_SCRIPT_CHARS", "20000")),
         max_parts=int(os.getenv("MAX_PARTS", "10")),
         json_response_format=mode == "json_object",
+        fallback_model=os.getenv(f"{prefix}_FALLBACK_MODEL", default_fallback).strip(),
     )
