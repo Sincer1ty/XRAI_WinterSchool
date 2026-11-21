@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rokid.renewcxrlsample.R
+import com.rokid.renewcxrlsample.activities.script.ScriptPrepActivity
 import com.rokid.renewcxrlsample.app.CONSTANT
 import com.rokid.renewcxrlsample.app.CONSTANT.REQUEST_CODE_AUTH
 import com.rokid.renewcxrlsample.session.CxrSessionType
@@ -67,7 +68,8 @@ class MainActivity : ComponentActivity() {
                     checkRokidAppInstalled = { viewModel.isRokidAppInstalled(this) },
                     checkAuth = { viewModel.checkAuth(this@MainActivity) },
                     toCustomView = { viewModel.toSession(this@MainActivity, CxrSessionType.CUSTOM_VIEW) },
-                    toCustomApp = { viewModel.toSession(this@MainActivity, CxrSessionType.CUSTOM_APP) }
+                    toCustomApp = { viewModel.toSession(this@MainActivity, CxrSessionType.CUSTOM_APP) },
+                    toScriptPrep = { ScriptPrepActivity.start(this@MainActivity) }
                 )
             }
         }
@@ -97,6 +99,7 @@ fun MainScreen(
     checkAuth: () -> Unit = {},
     toCustomView: () -> Unit = {},
     toCustomApp: () -> Unit = {},
+    toScriptPrep: () -> Unit = {},
 ) {
     val info by viewModel.infoText.collectAsState()
     val isRokidAppInstalled by viewModel.isRokidAppInstalled.collectAsState(false)
@@ -120,6 +123,12 @@ fun MainScreen(
                 stringResource(id = R.string.flow_step_select_scene)
             ),
             currentIndex = stepIndex
+        )
+
+        SceneSelectCard(
+            title = stringResource(id = R.string.home_script_prep_title),
+            features = stringResource(id = R.string.home_script_prep_desc),
+            onClick = toScriptPrep
         )
 
         DevStatusCard(

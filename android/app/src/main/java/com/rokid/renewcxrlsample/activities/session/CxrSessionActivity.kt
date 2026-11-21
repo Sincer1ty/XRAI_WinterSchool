@@ -20,6 +20,7 @@ import com.rokid.renewcxrlsample.activities.audio.AudioUsageViewModel
 import com.rokid.renewcxrlsample.activities.customCMD.CustomCmdViewModel
 import com.rokid.renewcxrlsample.activities.device.DeviceControlViewModel
 import com.rokid.renewcxrlsample.activities.photo.PhotoUsageViewModel
+import com.rokid.renewcxrlsample.activities.script.ScriptPrepActivity
 import com.rokid.renewcxrlsample.app.CONSTANT
 import com.rokid.renewcxrlsample.navigation.observeCxrSceneNavigation
 import com.rokid.renewcxrlsample.session.CxrFeature
@@ -107,7 +108,16 @@ class CxrSessionActivity : ComponentActivity() {
                                     navController.navigate(feature.route)
                                 }
                             },
-                            onRequestInstall = { activity.requestInstallPermissions() }
+                            onRequestInstall = { activity.requestInstallPermissions() },
+                            onOpenScriptPrep = { ScriptPrepActivity.start(activity) },
+                            onStartPresentation = {
+                                // 발표 진행(쉼 감지·힌트 표시)은 다음 파트에서 연결한다.
+                                Toast.makeText(
+                                    activity,
+                                    R.string.presentation_start_pending,
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
                         )
                     }
                     composable(SceneRoutes.AUDIO) {

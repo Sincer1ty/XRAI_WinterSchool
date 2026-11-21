@@ -10,6 +10,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import com.rokid.renewcxrlsample.R
+import com.rokid.renewcxrlsample.script.ScriptPrepRepository
+import com.rokid.renewcxrlsample.ui.feature.PresentationStartSection
 import com.rokid.renewcxrlsample.session.CxrFeature
 import com.rokid.renewcxrlsample.session.CxrFeaturePolicy
 import com.rokid.renewcxrlsample.session.CxrScenePhase
@@ -32,7 +34,10 @@ fun SessionHubScreen(
     sessionType: CxrSessionType,
     onNavigateToFeature: (CxrFeature) -> Unit,
     onRequestInstall: () -> Unit = {},
+    onOpenScriptPrep: () -> Unit = {},
+    onStartPresentation: () -> Unit = {},
 ) {
+    val prepState by ScriptPrepRepository.controller.state.collectAsState()
     val tokenGot by viewModel.tokenGot.collectAsState()
     val connected by viewModel.connected.collectAsState()
     val btConnected by viewModel.btConnected.collectAsState()
@@ -79,6 +84,12 @@ fun SessionHubScreen(
                 wearing = wearing,
                 deviceInfo = deviceInfo
             )
+        )
+
+        PresentationStartSection(
+            prepState = prepState,
+            onOpenPrep = onOpenScriptPrep,
+            onStart = onStartPresentation
         )
 
         SceneSectionTitle(stringResource(id = R.string.device_info_section))
