@@ -69,10 +69,17 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
-def normalize_parts(raw_parts: Any, max_parts: int, script: str | None = None) -> list[ScriptPart]:
+def normalize_parts(
+    raw_parts: Any,
+    max_parts: int,
+    script: str | None = None,
+    sections: list[tuple[str | None, str]] | None = None,
+) -> list[ScriptPart]:
     """LLM 등 외부 결과를 검증해 ScriptPart 목록으로 만든다. 형식이 틀리면 AnalyzerError.
 
     script를 주면 대본에 실제로 나온 키워드만 남긴다. 발표 중 매칭이 원문 표현 기준이기 때문이다.
+    sections(제목 기준 파트)를 주면 파트 수가 같아야 하고, 키워드는 그 파트 본문에 나온 것만 남기며
+    제목은 대본의 제목을 그대로 쓴다.
     """
     source = _norm(script) if script is not None else None
     if not isinstance(raw_parts, list) or not raw_parts:
@@ -81,8 +88,13 @@ def normalize_parts(raw_parts: Any, max_parts: int, script: str | None = None) -
         raise AnalyzerError(
             "analysis_invalid_format", f"파트 수가 최대 {max_parts}개를 넘었습니다."
         )
+    if sections is not None and len(raw_parts) != len(sections):
+        raise AnalyzerError(
+            "analysis_invalid_format",
+            f"대본 제목은 {len(sections)}개인데 AI가 {len(raw_parts)}개 파트로 나눴습니다. 다시 분석하세요.",
+        )
 
-    parts: list[ScriptPart] = []
+    checked: list[tuple[str, str, list[str]]] = []
     for i, raw in enumerate(raw_parts, start=1):
         if not isinstance(raw, dict):
             raise AnalyzerError("analysis_invalid_format", f"{i}번 파트 형식이 올바르지 않습니다.")
@@ -96,6 +108,12 @@ def normalize_parts(raw_parts: Any, max_parts: int, script: str | None = None) -
         if not isinstance(keywords, list):
             raise AnalyzerError("analysis_invalid_format", f"{i}번 파트의 키워드 형식이 올바르지 않습니다.")
 
+        part_source = source
+        if sections is not None:
+            heading, body = sections[i - 1]
+            # 제목은 소리 내어 읽지 않으므로 키워드는 본문에서만 찾는다.
+            part_source = _norm(body)
+            title = heading or title
         cleaned: list[str] = []
         for kw in keywords:
             if not isinstance(kw, str):
@@ -103,7 +121,7 @@ def normalize_parts(raw_parts: Any, max_parts: int, script: str | None = None) -
             kw = re.sub(r"\s+", " ", kw).strip()
             if not kw or len(kw) > KEYWORD_LEN_MAX or kw in cleaned:
                 continue
-            if source is not None and _norm(kw) not in source:
+            if part_source is not None and _norm(kw) not in part_source:
                 continue
             cleaned.append(kw)
         if not cleaned:
@@ -111,15 +129,51 @@ def normalize_parts(raw_parts: Any, max_parts: int, script: str | None = None) -
                 "analysis_invalid_format", f"{i}번 파트에 대본에 나온 짧은 키워드가 없습니다."
             )
 
-        parts.append(
-            ScriptPart(
-                index=i,
-                title=_clip(title, TITLE_MAX),
-                keywords=cleaned[:KEYWORDS_MAX],
-                hint=_clip(hint, HINT_MAX),
-            )
-        )
-    return parts
+        checked.append((title, hint, cleaned))
+
+    checked = _drop_shared_keywords(checked)
+    if sections is not None:
+        checked = _drop_keywords_in_other_sections(checked, sections)
+    return [
+        ScriptPart(index=i, title=_clip(title, TITLE_MAX), keywords=kws[:KEYWORDS_MAX], hint=_clip(hint, HINT_MAX))
+        for i, (title, hint, kws) in enumerate(checked, start=1)
+    ]
+
+
+def _drop_keywords_in_other_sections(
+    parts: list[tuple[str, str, list[str]]],
+    sections: list[tuple[str | None, str]],
+) -> list[tuple[str, str, list[str]]]:
+    """다른 파트 본문에도 나오는 키워드를 뺀다. 그 문장을 말할 때 다른 파트로 잘못 판단하기 때문이다.
+
+    빼고 나면 키워드가 없는 파트는 원래 키워드를 그대로 둔다.
+    """
+    texts = [_norm(body) for _, body in sections]
+    result = []
+    for i, (title, hint, kws) in enumerate(parts):
+        unique = [kw for kw in kws if not any(_norm(kw) in t for j, t in enumerate(texts) if j != i)]
+        result.append((title, hint, unique or kws))
+    return result
+
+
+def _drop_shared_keywords(
+    parts: list[tuple[str, str, list[str]]],
+) -> list[tuple[str, str, list[str]]]:
+    """여러 파트에 걸치는 키워드를 뺀다. 그런 키워드가 들리면 발표 중 파트를 가르지 못하기 때문이다.
+
+    한쪽이 다른 쪽을 포함해도 겹친 것으로 본다 ("발표"는 "수업 발표"를 말할 때도 들린다).
+    빼고 나면 키워드가 없는 파트는 원래 키워드를 그대로 둔다.
+    """
+    norms = [[_norm(k) for k in kws] for _, _, kws in parts]
+
+    def shared(i: int, k: str) -> bool:
+        return any(k in o or o in k for j, others in enumerate(norms) if j != i for o in others)
+
+    result = []
+    for i, (title, hint, kws) in enumerate(parts):
+        unique = [kw for kw, k in zip(kws, norms[i]) if not shared(i, k)]
+        result.append((title, hint, unique or kws))
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +230,14 @@ def _merge_to_limit(sections: list[tuple[str | None, str]], limit: int) -> list[
         (t1, b1), (t2, b2) = sections[best], sections[best + 1]
         sections[best : best + 2] = [(t1 or t2, f"{b1}\n\n{b2}".strip())]
     return sections
+
+
+def heading_sections(script: str, max_parts: int) -> list[tuple[str | None, str]] | None:
+    """대본에 마크다운 제목이 있으면 제목 기준 파트 목록. 없거나 최대 파트 수를 넘으면 None (AI가 나눈다)."""
+    if not any(_HEADING_RE.match(line) for line in script.splitlines()):
+        return None
+    sections = _split_sections(script)
+    return sections if 0 < len(sections) <= max_parts else None
 
 
 def _first_sentence(text: str) -> str:
@@ -237,13 +299,17 @@ SYSTEM_PROMPT = """너는 발표 대본을 분석해 발표자가 안경 화면�
 
 규칙:
 1. 대본을 흐름에 따라 순서대로 {max_parts}개 이하의 파트로 나눈다. 대본의 모든 내용이 어느 한 파트에 속해야 한다.
+   대본에 "#"로 시작하는 제목이 있으면 제목 하나를 파트 하나로 삼고, 제목 안을 더 쪼개지 않는다.
 2. 각 파트마다
    - title: 파트 내용을 요약한 제목 (한국어 20자 이내)
-   - keywords: 그 파트에서 반드시 말해야 하는 핵심 회상 단서 1~5개.
+   - keywords: 그 파트에서 반드시 말해야 하는 핵심 회상 단서 3~5개 (파트가 아주 짧으면 1~2개).
+     · 파트의 앞·중간·뒤에서 고르게 고른다. 발표 중 어느 문장을 말하는지 따라가는 데 쓰인다.
      · 대본에 글자 그대로 나온 짧은 명사·명사구만 쓴다 (2~8자, 띄어쓰기 포함 최대 {kw_len}자).
      · 문장·서술어("~합니다", "~잊습니다")는 쓰지 말고 핵심 명사만 남긴다.
        예: 대본 "긴장하면 대본을 잊습니다" → "긴장", "대본" (O) / "긴장하면 대본을 잊습니다" (X)
      · 대본에 없는 요약어·동의어를 새로 만들지 않는다 (예: "대본 망각" X).
+     · 다른 파트에도 나오는 단어("발표", "발표자"처럼 대본 전체에 반복되는 말)는 쓰지 않고,
+       그 파트에서만 나오는 표현을 고른다. 발표 중 이 키워드로 현재 파트를 구분한다.
    - hint: 그 파트를 시작할 때 말하는 첫 구절 (대본 그대로, 25자 이내)
 3. 다음 JSON 객체 하나만 출력한다. 다른 글은 쓰지 않는다.
 {{"parts": [{{"title": "...", "keywords": ["..."], "hint": "..."}}]}}"""
@@ -309,12 +375,22 @@ class OpenAICompatibleAnalyzer:
     ) -> list[ScriptPart]:
         """모델 하나를 호출한다. 다른 모델로 넘어가도 되는 실패는 retryable=True로 알린다."""
         s = self.settings
+        # 제목이 있으면 파트는 서버가 정한다. AI 응답이 매번 달라 제목 지시만으로는 보장되지 않기 때문이다.
+        sections = heading_sections(script, s.max_parts)
+        user = f"발표 대본:\n\"\"\"\n{script}\n\"\"\""
+        if sections is not None:
+            listing = "\n".join(f"{n}. {t or '(제목 없음)'}" for n, (t, _) in enumerate(sections, start=1))
+            user += (
+                f"\n\n이 대본은 제목으로 파트 {len(sections)}개가 정해져 있다. 아래 순서대로 정확히 "
+                f"{len(sections)}개 파트를 만들고, 각 파트의 keywords와 hint는 그 제목 아래 본문에서만 고른다. 제목 글자는 발표 중 말하지 않으므로 키워드로 쓰지 않는다.\n{listing}"
+            )
+        min_items, max_items = (len(sections), len(sections)) if sections is not None else (1, s.max_parts)
         payload = {
             "model": model,
             "stream": False,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT.format(max_parts=s.max_parts, kw_len=KEYWORD_LEN_MAX)},
-                {"role": "user", "content": f"발표 대본:\n\"\"\"\n{script}\n\"\"\""},
+                {"role": "user", "content": user},
             ],
         }
         if s.analyzer_provider == "gemini":
@@ -328,8 +404,8 @@ class OpenAICompatibleAnalyzer:
                         "properties": {
                             "parts": {
                                 "type": "array",
-                                "minItems": 1,
-                                "maxItems": s.max_parts,
+                                "minItems": min_items,
+                                "maxItems": max_items,
                                 "items": {
                                     "type": "object",
                                     "properties": {
@@ -396,7 +472,7 @@ class OpenAICompatibleAnalyzer:
         if not isinstance(data, dict):
             raise AnalyzerError("analysis_invalid_format", "AI 응답이 JSON 객체가 아닙니다.", retryable=True)
         try:
-            return normalize_parts(data.get("parts"), s.max_parts, script)
+            return normalize_parts(data.get("parts"), s.max_parts, script, sections)
         except AnalyzerError as e:
             # 형식 오류는 모델 출력 문제라 다른 모델이 지킬 수 있다.
             e.retryable = True

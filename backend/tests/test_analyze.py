@@ -199,3 +199,72 @@ def test_requests_without_llm_report_server_time_only():
     r = client.post("/api/v1/hints/pause", json={"script_sha256": "none", "text": "발표"})
     assert r.status_code == 409
     assert set(_timing(r)) == {"app", "total"}
+
+
+def test_keywords_shared_across_parts_are_dropped():
+    script = "수업 발표가 어렵습니다. 대본을 봅니다. 그래서 발표 힌트 안경을 만들었습니다. 단서를 줍니다."
+    parts = {"parts": [
+        {"title": "문제", "hint": "수업 발표가", "keywords": ["수업 발표", "대본"]},
+        {"title": "해결", "hint": "그래서", "keywords": ["발표", "힌트 안경", "단서"]},
+        {"title": "끝", "hint": "단서를", "keywords": ["단서"]},
+    ]}
+    r = _llm_app(lambda req: _chat(json.dumps(parts, ensure_ascii=False))).post(
+        "/api/v1/scripts/analyze", json={"script": script}
+    )
+    assert r.status_code == 200
+    got = [p["keywords"] for p in r.json()["parts"]]
+    # "발표"는 "수업 발표"에 포함되어 양쪽에서 빠지고, "단서"는 두 파트에 있어 빠진다.
+    # 빼면 키워드가 없는 마지막 파트는 원래 키워드를 유지한다.
+    assert got == [["대본"], ["힌트 안경"], ["단서"]]
+
+
+HEADED = "# 문제\n발표 불안이 큽니다.\n\n# 해결\n스마트 안경을 씁니다."
+
+
+def test_headings_fix_part_count_and_keyword_source():
+    def handler(request):
+        payload = json.loads(request.content)
+        assert "정확히 2개 파트" in payload["messages"][1]["content"]
+        # 2번 파트에 1번 본문 단어("발표 불안")를 넣어도 그 파트 본문에 없으므로 빠진다.
+        parts = {"parts": [
+            {"title": "AI 제목", "hint": "발표 불안이", "keywords": ["발표 불안"]},
+            {"title": "AI 제목2", "hint": "스마트 안경을", "keywords": ["발표 불안", "스마트 안경"]},
+        ]}
+        return _chat(json.dumps(parts, ensure_ascii=False))
+
+    r = _llm_app(handler).post("/api/v1/scripts/analyze", json={"script": HEADED})
+    assert r.status_code == 200
+    got = [(p["title"], p["keywords"]) for p in r.json()["parts"]]
+    assert got == [("문제", ["발표 불안"]), ("해결", ["스마트 안경"])]
+
+
+def test_part_count_different_from_headings_is_rejected():
+    parts = {"parts": [{"title": "하나로", "hint": "발표", "keywords": ["발표 불안"]}]}
+    r = _llm_app(lambda req: _chat(json.dumps(parts, ensure_ascii=False))).post(
+        "/api/v1/scripts/analyze", json={"script": HEADED}
+    )
+    assert r.status_code == 502
+    assert r.json()["error"]["code"] == "analysis_invalid_format"
+
+
+def test_keywords_found_in_other_section_text_are_dropped():
+    script = "# 문제\n발표 불안이 큽니다. 서버 이야기도 합니다.\n\n# 해결\n서버와 스마트 안경을 씁니다."
+    parts = {"parts": [
+        {"title": "a", "hint": "발표", "keywords": ["발표 불안"]},
+        {"title": "b", "hint": "서버와", "keywords": ["서버", "스마트 안경"]},
+    ]}
+    r = _llm_app(lambda req: _chat(json.dumps(parts, ensure_ascii=False))).post(
+        "/api/v1/scripts/analyze", json={"script": script}
+    )
+    # "서버"는 1번 파트 본문에도 있어 그 문장을 말하면 2번 파트로 잘못 판단하므로 뺀다.
+    assert [p["keywords"] for p in r.json()["parts"]] == [["발표 불안"], ["스마트 안경"]]
+
+
+def test_heading_words_are_not_keywords():
+    script = "# 데모 시연\n이제 직접 보여드리겠습니다."
+    parts = {"parts": [{"title": "a", "hint": "이제", "keywords": ["데모 시연", "직접"]}]}
+    r = _llm_app(lambda req: _chat(json.dumps(parts, ensure_ascii=False))).post(
+        "/api/v1/scripts/analyze", json={"script": script}
+    )
+    # 제목은 말하지 않으므로 제목에만 있는 키워드는 매칭될 수 없다.
+    assert r.json()["parts"][0]["keywords"] == ["직접"]

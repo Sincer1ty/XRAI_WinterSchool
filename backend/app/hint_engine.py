@@ -28,8 +28,10 @@ def match_part(script_sha256: str, parts: list[ScriptPart], text: str) -> MatchR
     text는 최근 문장을 줄바꿈으로 구분한 것이다 (오래된 것 → 최신).
     파트를 넘어간 직후 이전 문장이 섞여도 흔들리지 않도록 최신 문장 우선으로 판단한다:
     1. 최신 문장부터 거꾸로 보며 키워드가 처음 나온 문장에서 가장 많이 맞은 파트를 고른다.
-       그 문장 안에서 동점이면 최근 문장 전체 키워드 수로 가르고, 그래도 같으면 ambiguous.
+       그 문장 안에서 동점이면 더 이전 문장으로 거슬러 올라가 동점 파트 중 하나만 맞는 문장이
+       나오면 그 파트로 정한다. 동점 파트와 무관한 문장(다른 파트)에 닿거나 끝까지 못 가르면 ambiguous.
     2. 말한 키워드는 그 문장부터 거꾸로, 다른 파트 키워드만 나온 문장을 만나기 전까지 모은다.
+       폰은 발표 중 최근 문장을 넉넉히(최대 20개) 보내므로, 파트 앞부분에서 말한 키워드도 센다.
     """
     # ponytail: 키워드 부분 문자열 개수 비교. 의역·동의어까지 잡아야 하면 임베딩 유사도로 바꾼다.
     sentences = [line for line in text.split("\n") if line.strip()]
@@ -42,9 +44,14 @@ def match_part(script_sha256: str, parts: list[ScriptPart], text: str) -> MatchR
     best = max(len(h) for h in per_sentence[anchor])
     top = [i for i, h in enumerate(per_sentence[anchor]) if len(h) == best]
     if len(top) > 1:
-        totals = {i: len({k for h in per_sentence for k in h[i]}) for i in top}
-        most = max(totals.values())
-        top = [i for i in top if totals[i] == most]
+        for j in reversed(range(anchor)):
+            h = per_sentence[j]
+            hit = [i for i in top if h[i]]
+            if len(hit) == 1:
+                top = hit
+                break
+            if any(h) and not hit:
+                break  # 동점 파트와 무관한 이전 파트 문장
     if len(top) > 1:
         shared = sorted({k for i in top for k in per_sentence[anchor][i]})
         return MatchResponse(**base, status="ambiguous", matched_keywords=shared)

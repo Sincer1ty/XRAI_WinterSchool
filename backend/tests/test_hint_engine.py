@@ -110,3 +110,30 @@ def test_empty_match_checks_prepared_script_without_selecting_hint():
     missing = _client().post("/api/v1/parts/match", json=request)
     assert missing.status_code == 409
     assert missing.json()["error"]["code"] == "script_not_prepared"
+
+
+LONG_PARTS = [
+    ScriptPart(index=1, title="문제", keywords=["발표 불안", "대본", "긴장"], hint="안녕하세요"),
+    ScriptPart(index=2, title="해결", keywords=["스마트 안경", "힌트"], hint="그래서 저희는"),
+    ScriptPart(index=3, title="효과", keywords=["자신감", "힌트"], hint="결과적으로"),
+]
+
+
+def test_keyword_said_early_in_part_is_not_shown_again():
+    # 폰이 최근 3문장만 보내던 때는 첫 문장의 '발표 불안'이 빠져 다시 표시됐다.
+    lines = ["발표 불안이 큽니다", "정말 그렇습니다", "많이들 겪습니다", "그래서 대본을 봅니다"]
+    r = hint_for_pause(SHA, LONG_PARTS, "\n".join(lines))
+    assert (r.part_index, r.matched_keywords) == (1, ["발표 불안", "대본"])
+    assert r.hint_keywords == ["긴장"]
+
+
+def test_tie_break_looks_back_only_until_another_part():
+    # 오래전 파트 3 문장이 있어도, 바로 앞이 파트 2면 파트 2로 정한다.
+    lines = ["자신감이 생깁니다", "자신감 덕분입니다", "스마트 안경을 씁니다", "힌트가 뜹니다"]
+    r = match_part(SHA, LONG_PARTS, "\n".join(lines))
+    assert (r.status, r.part_index, r.matched_keywords) == ("matched", 2, ["스마트 안경", "힌트"])
+
+
+def test_tie_without_decisive_sentence_stays_ambiguous():
+    r = match_part(SHA, LONG_PARTS, "발표 불안이 큽니다\n힌트가 뜹니다")
+    assert (r.status, r.part_index) == ("ambiguous", None)

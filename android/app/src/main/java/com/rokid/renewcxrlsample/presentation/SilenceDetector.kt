@@ -19,7 +19,8 @@ enum class VoiceStatus {
 class SilenceDetector(
     /** 이 값 이상이면 발화로 본다. 실기기에서 조정하는 값 (화면에서 바꿀 수 있음). */
     @Volatile var speechRms: Double = DEFAULT_SPEECH_RMS,
-    private val pauseMs: Long = DEFAULT_PAUSE_MS,
+    /** 말한 뒤 이 시간 동안 조용하면 멈춤. 실기기 테스트 중 화면에서 바꿀 수 있음. */
+    @Volatile var pauseMs: Long = DEFAULT_PAUSE_MS,
     private val inputLostMs: Long = DEFAULT_INPUT_LOST_MS,
 ) {
     private var lastChunkAt: Long? = null

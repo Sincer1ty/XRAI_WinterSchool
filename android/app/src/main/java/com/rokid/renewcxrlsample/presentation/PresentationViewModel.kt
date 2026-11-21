@@ -54,6 +54,7 @@ data class PresentationUiState(
     val peakRms: Double = 0.0,
     val silentMs: Long = 0,
     val speechRms: Double = SilenceDetector.DEFAULT_SPEECH_RMS,
+    val pauseMs: Long = SilenceDetector.DEFAULT_PAUSE_MS,
     val speech: SpeechProbeState = SpeechProbeState(),
     val startError: StartError? = null,
     val startErrorDetail: String? = null,
@@ -107,7 +108,11 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
     private val speech: PcmSpeechProbe = PcmSpeechProbe(
         application,
         viewModelScope,
-        onState = { s -> _ui.value = _ui.value.copy(speech = s) },
+        onState = { s ->
+            _ui.value = _ui.value.copy(speech = s)
+            // 띄운 키워드가 중간 결과에 들리면 확정 문장을 기다리지 않고 바로 숨긴다.
+            if (controller.onPartial(s.partial) && !renderer.hide()) controller.onHideFailed()
+        },
         onFinal = { text ->
             controller.onFinal(text)?.let(::requestDelivery)
             // 멈춤이 먼저 감지되고 확정 문장이 늦게 온 경우, 그 문장으로 힌트를 요청한다.
@@ -188,7 +193,7 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
                     controller.halt(HaltReason.AudioStopped)
                 }
                 if (presentation.value.phase == PresentationPhase.Running && accepting.get() && detector.tick(now)) {
-                    val request = controller.onPause()
+                    val request = controller.onPause(_ui.value.speech.partial)
                     if (request != null) requestPause(request)
                     else {
                         pauseWaitingForText = presentation.value.let {
@@ -259,6 +264,12 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
     fun setSpeechRms(value: Double) {
         detector.speechRms = value
         _ui.value = _ui.value.copy(speechRms = value)
+    }
+
+    /** 테스트 중 멈춤 판단 시간 조정. 기본값은 팀 결정 3초. */
+    fun setPauseMs(value: Long) {
+        detector.pauseMs = value
+        _ui.value = _ui.value.copy(pauseMs = value)
     }
 
     private fun localStartError(): StartError? {
@@ -402,7 +413,7 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
             val shown = controller.completePause(request, currentOutcome) ?: return@launch
             val ackBefore = CustomViewAcks.last.value.seq
             val sent = renderer.show(keywordLine(shown.hint.keywords))
-            controller.onHintRendered(shown.id, sent, SystemClock.elapsedRealtime())
+            controller.onHintRendered(shown.id, sent, SystemClock.elapsedRealtime(), _ui.value.speech.partial)
             if (!sent) return@launch
             // 요청 전송만으로는 안경에 보였는지 알 수 없다. 안경 갱신 응답을 기다려 기록한다.
             val ack = withTimeoutOrNull(GLASS_ACK_TIMEOUT_MS) {

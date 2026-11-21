@@ -339,4 +339,5 @@
     <string name="script_prep_timing_line">Analysis time: total %1$s · AI wait %2$s · server %3$s · network %4$s</string>
     <string name="presentation_timing_line">Server response (%1$s): total %2$s · server %3$s · network %4$s</string>
     <string name="presentation_timing_none">Server response time: none yet</string>
+    <string name="presentation_pause_label">Pause after: %1$.1f s (default 3 s)</string>
 </resources>
