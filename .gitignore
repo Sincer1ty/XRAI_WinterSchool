@@ -33,3 +33,40 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Local data and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.key
+secrets.properties
+keystore.properties
+credentials*.json
+service-account*.json
+android-environment-backup-*.json
+*-backup-*/
+
+# Python and frontend artifacts
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+dist/
+coverage/
+
+# Presentation sessions and recordings
+data/
+recordings/
+*.pcm
+*.wav
+*.mp4
+*.pptx
+
+# OS/editor state
+.DS_Store
+Thumbs.db
+.vscode/*.log
