@@ -10,6 +10,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import com.rokid.renewcxrlsample.R
+import com.rokid.renewcxrlsample.script.ScriptPrepRepository
+import com.rokid.renewcxrlsample.ui.feature.PresentationStartSection
 import com.rokid.renewcxrlsample.session.CxrFeature
 import com.rokid.renewcxrlsample.session.CxrFeaturePolicy
 import com.rokid.renewcxrlsample.session.CxrScenePhase
@@ -32,7 +34,11 @@ fun SessionHubScreen(
     sessionType: CxrSessionType,
     onNavigateToFeature: (CxrFeature) -> Unit,
     onRequestInstall: () -> Unit = {},
+    onOpenScriptPrep: () -> Unit = {},
+    onStartPresentation: () -> Unit = {},
+    onOpenDiagnostics: () -> Unit = {},
 ) {
+    val prepState by ScriptPrepRepository.controller.state.collectAsState()
     val tokenGot by viewModel.tokenGot.collectAsState()
     val connected by viewModel.connected.collectAsState()
     val btConnected by viewModel.btConnected.collectAsState()
@@ -81,6 +87,12 @@ fun SessionHubScreen(
             )
         )
 
+        PresentationStartSection(
+            prepState = prepState,
+            onOpenPrep = onOpenScriptPrep,
+            onStart = onStartPresentation
+        )
+
         SceneSectionTitle(stringResource(id = R.string.device_info_section))
         Button(
             modifier = Modifier.fillMaxWidth(),
@@ -103,7 +115,8 @@ fun SessionHubScreen(
             installNeedsStoragePermission = installNeedsStoragePermission,
             sessionReady = sessionReady,
             connectSuccess = connected && btConnected,
-            onRequestInstall = onRequestInstall
+            onRequestInstall = onRequestInstall,
+            onOpenDiagnostics = onOpenDiagnostics
         )
 
         SceneSectionTitle(stringResource(id = R.string.session_capabilities_section))
@@ -144,6 +157,7 @@ private fun SceneControlSection(
     sessionReady: Boolean,
     connectSuccess: Boolean,
     onRequestInstall: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
 ) {
     when (sessionType) {
         CxrSessionType.CUSTOM_VIEW -> {
@@ -168,7 +182,12 @@ private fun SceneControlSection(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = { viewModel.openCustomView() }
                 ) { Text(stringResource(id = R.string.custom_view_open)) }
+                PrerequisiteHint("안경 음성·STT 진단은 안경 화면을 연 뒤 사용할 수 있습니다.")
             } else {
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onOpenDiagnostics
+                ) { Text("안경 음성·STT 진단") }
                 Button(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = { viewModel.updateCustomView() }

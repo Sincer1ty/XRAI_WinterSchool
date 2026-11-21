@@ -16,12 +16,15 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.rokid.renewcxrlsample.R
+import com.rokid.renewcxrlsample.diagnostics.GlassDiagnosticsActivity
 import com.rokid.renewcxrlsample.activities.audio.AudioUsageViewModel
 import com.rokid.renewcxrlsample.activities.customCMD.CustomCmdViewModel
 import com.rokid.renewcxrlsample.activities.device.DeviceControlViewModel
 import com.rokid.renewcxrlsample.activities.photo.PhotoUsageViewModel
+import com.rokid.renewcxrlsample.activities.script.ScriptPrepActivity
 import com.rokid.renewcxrlsample.app.CONSTANT
 import com.rokid.renewcxrlsample.navigation.observeCxrSceneNavigation
+import com.rokid.renewcxrlsample.presentation.PresentationActivity
 import com.rokid.renewcxrlsample.session.CxrFeature
 import com.rokid.renewcxrlsample.session.CxrFeaturePolicy
 import com.rokid.renewcxrlsample.session.CxrSessionType
@@ -107,7 +110,12 @@ class CxrSessionActivity : ComponentActivity() {
                                     navController.navigate(feature.route)
                                 }
                             },
-                            onRequestInstall = { activity.requestInstallPermissions() }
+                            onRequestInstall = { activity.requestInstallPermissions() },
+                            onOpenScriptPrep = { ScriptPrepActivity.start(activity) },
+                            onStartPresentation = { PresentationActivity.start(activity) },
+                            onOpenDiagnostics = {
+                                activity.startActivity(Intent(activity, GlassDiagnosticsActivity::class.java))
+                            }
                         )
                     }
                     composable(SceneRoutes.AUDIO) {

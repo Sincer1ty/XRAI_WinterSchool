@@ -15,7 +15,6 @@ import com.rokid.cxr.link.callbacks.IGlassAppCbk
 import com.rokid.cxr.link.utils.IconInfo
 import com.rokid.renewcxrlsample.R
 import com.rokid.renewcxrlsample.app.CONSTANT
-import com.rokid.renewcxrlsample.dataBean.selfView.ImageViewProps
 import com.rokid.renewcxrlsample.dataBean.selfView.LinearLayoutProps
 import com.rokid.renewcxrlsample.dataBean.selfView.SelfViewJson
 import com.rokid.renewcxrlsample.dataBean.selfView.TextViewProps
@@ -133,7 +132,9 @@ class SessionHubViewModel : BaseViewModel() {
 
         override fun onCustomViewError(p0: Int, p1: String?) {
             logD("onCustomViewError: $p0, $p1")
-            _customViewOpened.value = false
+            // An update error does not close the view; ask the SDK instead of assuming closed.
+            _customViewOpened.value = ::cxrLink.isInitialized &&
+                runCatching { cxrLink.customViewIsOpen() }.getOrDefault(false)
         }
     }
 
@@ -332,41 +333,11 @@ class SessionHubViewModel : BaseViewModel() {
 
     fun updateCustomView() {
         if (!::cxrLink.isInitialized) return
-        val updateViewJson = if (customViewUpdateCount % 2 == 0) {
-            UpdateViewJson().apply {
-                updateList.add(UpdateViewJson.UpdateJson(id = "imageView").apply {
-                    props["name"] = "icon1"
-                })
-            }
-        } else {
-            UpdateViewJson().apply {
-                updateList.add(UpdateViewJson.UpdateJson(id = "imageView").apply {
-                    props["name"] = "icon2"
-                })
-            }
+        val text = "시험 문구 $customViewUpdateCount"
+        val updateViewJson = UpdateViewJson().apply {
+            updateList.add(UpdateViewJson.UpdateJson(id = "textView").apply { props["text"] = text })
         }
-        updateViewJson.updateList.add(UpdateViewJson.UpdateJson(id = "textView").apply {
-            props["text"] = "안녕하세요 로키드 $customViewUpdateCount"
-        })
-        selfViewTemplate.children?.get(0)?.props = TextViewProps().apply {
-            id = "textView"
-            layout_width = "wrap_content"
-            layout_height = "wrap_content"
-            text = "안녕하세요 로키드 $customViewUpdateCount"
-            textColor = "#00FF00"
-            textSize = "16sp"
-            gravity = "center"
-            textStyle = "bold"
-            paddingStart = "16dp"
-            paddingEnd = "16dp"
-        }.toJson()
-        selfViewTemplate.children?.get(1)?.props = ImageViewProps().apply {
-            id = "imageView"
-            layout_width = "120dp"
-            layout_height = "120dp"
-            name = if (customViewUpdateCount % 2 == 0) "icon1" else "icon2"
-            scaleType = "center"
-        }.toJson()
+        selfViewTemplate.children?.get(0)?.props = hintTextProps(text)
         customViewUpdateCount++
         if (customViewUpdateCount >= Int.MAX_VALUE) customViewUpdateCount = 1
         cxrLink.customViewUpdate(updateViewJson.toJson())
@@ -517,34 +488,27 @@ class SessionHubViewModel : BaseViewModel() {
             marginBottom = "80dp"
             backgroundColor = "#FF000000"
             orientation = "vertical"
-            gravity = "center_horizontal"
+            gravity = "center"
         }.toJson()
+        // Single hint line; no icon. Size/color are a default pending team decision.
         children = listOf(
             SelfViewJson().apply {
                 type = "TextView"
-                props = TextViewProps().apply {
-                    id = "textView"
-                    layout_width = "wrap_content"
-                    layout_height = "wrap_content"
-                    text = "안녕하세요"
-                    textColor = "#00FF00"
-                    textSize = "16sp"
-                    gravity = "center"
-                    textStyle = "bold"
-                    paddingStart = "16dp"
-                    paddingEnd = "16dp"
-                }.toJson()
-            },
-            SelfViewJson().apply {
-                type = "ImageView"
-                props = ImageViewProps().apply {
-                    id = "imageView"
-                    layout_width = "120dp"
-                    layout_height = "120dp"
-                    name = "icon1"
-                    scaleType = "center"
-                }.toJson()
+                props = hintTextProps("안경 화면 연결됨")
             }
         )
     }
+
+    private fun hintTextProps(value: String) = TextViewProps().apply {
+        id = "textView"
+        layout_width = "match_parent"
+        layout_height = "wrap_content"
+        text = value
+        textColor = "#FFFFFF"
+        textSize = "24sp"
+        gravity = "center"
+        textStyle = "bold"
+        paddingStart = "16dp"
+        paddingEnd = "16dp"
+    }.toJson()
 }
