@@ -145,7 +145,9 @@ fun PresentationScreen(
             lines = listOfNotNull(
                 // 시작 전·종료 상태에서는 제목이 이미 단계 표시이므로 반복하지 않는다.
                 if (running) stringResource(R.string.presentation_phase_line, phaseLabel(p.phase)) else null,
-                p.note?.takeUnless { preparing }?.let { noteText(it) },
+                // 중지 사유가 있으면 그 원인만 보인다. 요청 실패 안내("서버 연결 확인")가
+                // "서버에 대본 없음"과 함께 떠 원인이 엇갈리지 않게 한다.
+                p.note?.takeUnless { preparing || p.phase == PresentationPhase.Halted }?.let { noteText(it) },
                 p.haltReason?.takeIf { p.phase == PresentationPhase.Halted }?.let { haltText(it, ui) },
             ),
         )
@@ -270,6 +272,8 @@ private fun noteText(note: PresentationNote): String {
         NoteKind.NoHint -> stringResource(R.string.presentation_note_no_hint, d)
         NoteKind.PauseFailed -> stringResource(R.string.presentation_note_pause_failed)
         NoteKind.HintSent -> stringResource(R.string.presentation_note_hint_sent, d)
+        NoteKind.HintConfirmed -> stringResource(R.string.presentation_note_hint_confirmed, d)
+        NoteKind.HintNoAck -> stringResource(R.string.presentation_note_hint_no_ack, d)
         NoteKind.HintShowFailed -> stringResource(R.string.presentation_note_hint_show_failed, d)
         NoteKind.NotDeliveredYet -> stringResource(R.string.presentation_note_not_delivered)
         NoteKind.DeliveryCheckFailed -> stringResource(R.string.presentation_note_delivery_failed)

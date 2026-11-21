@@ -90,7 +90,7 @@ class PresentationControllerTest {
         assertNull("인식 문장이 없으면 요청하지 않음", c.onPause())
         listOf("하나", "둘", "셋", "넷").forEach { c.onFinal(it) }
         val req = c.onPause()!!
-        assertEquals("둘 셋 넷", req.text)
+        assertEquals("둘\n셋\n넷", req.text)
         assertEquals("sha", req.scriptSha256)
         assertNull("응답 전 중복 멈춤 요청 금지", c.onPause())
     }
@@ -144,6 +144,35 @@ class PresentationControllerTest {
         c.onHintRendered(shown.id, sent = false, nowMs = SHOWN_AT)
         assertNull(c.state.value.hint)
         assertEquals(NoteKind.HintShowFailed, c.state.value.note?.kind)
+    }
+
+    @Test
+    fun glassAckIsRecordedSeparatelyFromSending() {
+        val (c, shown) = withHint()
+        assertEquals("전송만으로는 표시 확인이 아님", NoteKind.HintSent, c.state.value.note?.kind)
+        c.onHintAck(shown.id, confirmed = true)
+        assertEquals(NoteKind.HintConfirmed, c.state.value.note?.kind)
+        assertNotNull(c.state.value.hint)
+    }
+
+    @Test
+    fun missingGlassAckKeepsHintButRecordsNoResponse() {
+        val (c, shown) = withHint()
+        c.onHintAck(shown.id, confirmed = null)
+        assertEquals(NoteKind.HintNoAck, c.state.value.note?.kind)
+        assertNotNull("보였는지 모르므로 표시 시간 정책 유지", c.state.value.hint)
+        assertEquals(5_000L, c.remainingMs(SHOWN_AT))
+    }
+
+    @Test
+    fun glassErrorClearsHintAndStaleAckIsIgnored() {
+        val (c, shown) = withHint()
+        c.onHintAck(shown.id + 1, confirmed = true)
+        assertEquals("다른 힌트의 응답은 무시", NoteKind.HintSent, c.state.value.note?.kind)
+        c.onHintAck(shown.id, confirmed = false)
+        assertNull(c.state.value.hint)
+        assertEquals(NoteKind.HintShowFailed, c.state.value.note?.kind)
+        assertNotNull("다음 멈춤에 다시 요청 가능", c.onPause())
     }
 
     @Test

@@ -16,11 +16,14 @@ from typing import Any, Protocol
 import httpx
 
 from .config import Settings
+from .hint_engine import _norm
 from .schemas import ScriptPart
 
 TITLE_MAX = 30
 HINT_MAX = 30
 KEYWORDS_MAX = 5
+# 안경에 한눈에 보이는 회상 단서 길이. 잘라 쓰면 원문 매칭이 깨지므로 넘으면 버린다.
+KEYWORD_LEN_MAX = 12
 
 
 class AnalyzerError(Exception):
@@ -48,8 +51,12 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
-def normalize_parts(raw_parts: Any, max_parts: int) -> list[ScriptPart]:
-    """LLM 등 외부 결과를 검증해 ScriptPart 목록으로 만든다. 형식이 틀리면 AnalyzerError."""
+def normalize_parts(raw_parts: Any, max_parts: int, script: str | None = None) -> list[ScriptPart]:
+    """LLM 등 외부 결과를 검증해 ScriptPart 목록으로 만든다. 형식이 틀리면 AnalyzerError.
+
+    script를 주면 대본에 실제로 나온 키워드만 남긴다. 발표 중 매칭이 원문 표현 기준이기 때문이다.
+    """
+    source = _norm(script) if script is not None else None
     if not isinstance(raw_parts, list) or not raw_parts:
         raise AnalyzerError("analysis_invalid_format", "분석 결과에 파트 목록이 없습니다.")
     if len(raw_parts) > max_parts:
@@ -73,12 +80,18 @@ def normalize_parts(raw_parts: Any, max_parts: int) -> list[ScriptPart]:
 
         cleaned: list[str] = []
         for kw in keywords:
-            if isinstance(kw, str):
-                kw = _clip(kw, 20)
-                if kw and kw not in cleaned:
-                    cleaned.append(kw)
+            if not isinstance(kw, str):
+                continue
+            kw = re.sub(r"\s+", " ", kw).strip()
+            if not kw or len(kw) > KEYWORD_LEN_MAX or kw in cleaned:
+                continue
+            if source is not None and _norm(kw) not in source:
+                continue
+            cleaned.append(kw)
         if not cleaned:
-            raise AnalyzerError("analysis_invalid_format", f"{i}번 파트에 키워드가 없습니다.")
+            raise AnalyzerError(
+                "analysis_invalid_format", f"{i}번 파트에 대본에 나온 짧은 키워드가 없습니다."
+            )
 
         parts.append(
             ScriptPart(
@@ -186,7 +199,7 @@ class MockAnalyzer:
             source = body or title or ""
             kws = _keywords(f"{title or ''}\n{body}")
             if not kws:
-                kws = [_clip(source, 10)]
+                kws = [source.strip()[:10].strip()]
             raw_parts.append(
                 {
                     "title": title or _first_sentence(source),
@@ -194,7 +207,7 @@ class MockAnalyzer:
                     "hint": _first_phrase(source) or source,
                 }
             )
-        return normalize_parts(raw_parts, self.max_parts)
+        return normalize_parts(raw_parts, self.max_parts, script)
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +221,11 @@ SYSTEM_PROMPT = """너는 발표 대본을 분석해 발표자가 안경 화면�
 1. 대본을 흐름에 따라 순서대로 {max_parts}개 이하의 파트로 나눈다. 대본의 모든 내용이 어느 한 파트에 속해야 한다.
 2. 각 파트마다
    - title: 파트 내용을 요약한 제목 (한국어 20자 이내)
-   - keywords: 그 파트에서 반드시 말해야 하는 핵심 키워드 1~5개. 대본에 실제로 나온 표현을 쓴다.
+   - keywords: 그 파트에서 반드시 말해야 하는 핵심 회상 단서 1~5개.
+     · 대본에 글자 그대로 나온 짧은 명사·명사구만 쓴다 (2~8자, 띄어쓰기 포함 최대 {kw_len}자).
+     · 문장·서술어("~합니다", "~잊습니다")는 쓰지 말고 핵심 명사만 남긴다.
+       예: 대본 "긴장하면 대본을 잊습니다" → "긴장", "대본" (O) / "긴장하면 대본을 잊습니다" (X)
+     · 대본에 없는 요약어·동의어를 새로 만들지 않는다 (예: "대본 망각" X).
    - hint: 그 파트를 시작할 때 말하는 첫 구절 (대본 그대로, 25자 이내)
 3. 다음 JSON 객체 하나만 출력한다. 다른 글은 쓰지 않는다.
 {{"parts": [{{"title": "...", "keywords": ["..."], "hint": "..."}}]}}"""
@@ -233,7 +250,7 @@ class OpenAICompatibleAnalyzer:
             "model": s.openai_model,
             "stream": False,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT.format(max_parts=s.max_parts)},
+                {"role": "system", "content": SYSTEM_PROMPT.format(max_parts=s.max_parts, kw_len=KEYWORD_LEN_MAX)},
                 {"role": "user", "content": f"발표 대본:\n\"\"\"\n{script}\n\"\"\""},
             ],
         }
@@ -256,7 +273,7 @@ class OpenAICompatibleAnalyzer:
                                         "title": {"type": "string"},
                                         "keywords": {
                                             "type": "array",
-                                            "items": {"type": "string"},
+                                            "items": {"type": "string", "maxLength": KEYWORD_LEN_MAX},
                                             "minItems": 1,
                                             "maxItems": KEYWORDS_MAX,
                                         },
@@ -311,7 +328,7 @@ class OpenAICompatibleAnalyzer:
 
         if not isinstance(data, dict):
             raise AnalyzerError("analysis_invalid_format", "AI 응답이 JSON 객체가 아닙니다.")
-        return normalize_parts(data.get("parts"), s.max_parts)
+        return normalize_parts(data.get("parts"), s.max_parts, script)
 
 
 def build_analyzer(settings: Settings) -> Analyzer:

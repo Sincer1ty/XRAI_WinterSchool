@@ -14,6 +14,7 @@ import com.rokid.renewcxrlsample.app.CXRLApplication
 import com.rokid.renewcxrlsample.diagnostics.Pcm16Probe
 import com.rokid.renewcxrlsample.diagnostics.PcmSpeechProbe
 import com.rokid.renewcxrlsample.diagnostics.SpeechProbeState
+import com.rokid.renewcxrlsample.link.CustomViewAcks
 import com.rokid.renewcxrlsample.link.CxrLinkConnectionHub
 import com.rokid.renewcxrlsample.script.ScriptPrepRepository
 import com.rokid.sprite.aiapp.externalapp.auth.AuthorizationHelper
@@ -25,7 +26,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** 발표를 시작하지 못한 이유. */
@@ -389,8 +392,15 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
                 PauseOutcome.NoHint("pause_ended")
             } else outcome
             val shown = controller.completePause(request, currentOutcome) ?: return@launch
+            val ackBefore = CustomViewAcks.last.value.seq
             val sent = renderer.show(keywordLine(shown.hint.keywords))
             controller.onHintRendered(shown.id, sent, SystemClock.elapsedRealtime())
+            if (!sent) return@launch
+            // 요청 전송만으로는 안경에 보였는지 알 수 없다. 안경 갱신 응답을 기다려 기록한다.
+            val ack = withTimeoutOrNull(GLASS_ACK_TIMEOUT_MS) {
+                CustomViewAcks.last.first { it.seq > ackBefore }
+            }
+            controller.onHintAck(shown.id, ack?.let { it.error == null })
         }
     }
 
@@ -422,6 +432,8 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
         const val TICK_MS = 200L
         /** Resource startup deadline; separate from the presentation silence policy. */
         const val STARTUP_TIMEOUT_MS = 10_000L
+        /** 표시 요청 뒤 안경 갱신 응답 대기. 임시값, 실기기 응답 지연 확인 후 조정. */
+        const val GLASS_ACK_TIMEOUT_MS = 2_000L
         /** 기존 샘플·진단과 같은 값. 16 kHz·모노·16비트 PCM으로 가정 (실기기 확인 필요). */
         const val AUDIO_CODEC_PCM = 1
     }

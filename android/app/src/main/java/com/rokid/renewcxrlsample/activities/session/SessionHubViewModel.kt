@@ -11,6 +11,7 @@ import androidx.core.graphics.createBitmap
 import androidx.lifecycle.viewModelScope
 import com.rokid.cxr.link.CXRLink
 import com.rokid.cxr.link.callbacks.ICustomViewCbk
+import com.rokid.renewcxrlsample.link.CustomViewAcks
 import com.rokid.cxr.link.callbacks.IGlassAppCbk
 import com.rokid.cxr.link.utils.IconInfo
 import com.rokid.renewcxrlsample.R
@@ -117,6 +118,7 @@ class SessionHubViewModel : BaseViewModel() {
 
         override fun onCustomViewUpdated() {
             logD("onCustomViewUpdated")
+            CustomViewAcks.onUpdated()
         }
 
         override fun onCustomViewClosed() {
@@ -132,6 +134,7 @@ class SessionHubViewModel : BaseViewModel() {
 
         override fun onCustomViewError(p0: Int, p1: String?) {
             logD("onCustomViewError: $p0, $p1")
+            CustomViewAcks.onError(p0, p1)
             // An update error does not close the view; ask the SDK instead of assuming closed.
             _customViewOpened.value = ::cxrLink.isInitialized &&
                 runCatching { cxrLink.customViewIsOpen() }.getOrDefault(false)

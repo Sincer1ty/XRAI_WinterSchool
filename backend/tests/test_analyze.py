@@ -105,7 +105,7 @@ def test_llm_success():
         assert json.loads(request.content)["response_format"] == {"type": "json_object"}
         return _chat(json.dumps(parts, ensure_ascii=False))
 
-    r = _llm_app(handler).post("/api/v1/scripts/analyze", json={"script": "안녕하세요"})
+    r = _llm_app(handler).post("/api/v1/scripts/analyze", json={"script": "안녕하세요. 발표 불안 이야기입니다."})
     assert r.status_code == 200
     assert r.json()["analyzer"] == "openai"
     assert r.json()["parts"][0]["keywords"] == ["발표 불안"]
@@ -148,3 +148,25 @@ def test_llm_missing_key():
     r = TestClient(create_app(settings)).post("/api/v1/scripts/analyze", json={"script": "x"})
     assert r.status_code == 503
     assert r.json()["error"]["code"] == "analyzer_not_configured"
+
+
+def test_llm_keeps_only_short_keywords_found_in_script():
+    script = "안녕하세요. 발표할 때 긴장하면 대본을 잊습니다."
+    parts = {"parts": [{"title": "문제", "hint": "안녕하세요", "keywords": [
+        "긴장하면 대본을 잊습니다", "대본 망각", "긴장", "대 본",
+    ]}]}
+    r = _llm_app(lambda req: _chat(json.dumps(parts, ensure_ascii=False))).post(
+        "/api/v1/scripts/analyze", json={"script": script}
+    )
+    assert r.status_code == 200
+    # 긴 문장·대본에 없는 요약어는 버리고, 띄어쓰기만 다른 원문 표현은 남긴다.
+    assert r.json()["parts"][0]["keywords"] == ["긴장", "대 본"]
+
+
+def test_llm_rejects_part_without_script_keywords():
+    parts = {"parts": [{"title": "문제", "hint": "안녕하세요", "keywords": ["대본 망각"]}]}
+    r = _llm_app(lambda req: _chat(json.dumps(parts, ensure_ascii=False))).post(
+        "/api/v1/scripts/analyze", json={"script": "긴장하면 대본을 잊습니다."}
+    )
+    assert r.status_code == 502
+    assert r.json()["error"]["code"] == "analysis_invalid_format"

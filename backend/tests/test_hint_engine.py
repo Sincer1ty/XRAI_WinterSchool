@@ -51,6 +51,29 @@ def test_pause_after_last_part_or_unknown_gives_no_hint():
     assert hint_for_pause(SHA, PARTS, "음...").hint is None
 
 
+def test_latest_sentence_wins_right_after_moving_to_next_part():
+    # 합쳐서 세면 파트 1(2개)이 이기지만, 최신 문장은 파트 2를 말하고 있다.
+    text = "발표 불안이 큽니다\n대본을 잊습니다\n그래서 스마트 안경을 만들었습니다"
+    r = hint_for_pause(SHA, PARTS, text)
+    assert (r.status, r.part_index, r.matched_keywords) == ("matched", 2, ["스마트 안경"])
+    assert (r.hint, r.hint_kind) == ("힌트", "remaining_keywords")
+
+
+def test_sentence_without_keywords_falls_back_to_previous_sentence():
+    r = hint_for_pause(SHA, PARTS, "발표 불안이 큽니다\n음 그러니까")
+    assert (r.part_index, r.matched_keywords, r.hint) == (1, ["발표 불안"], "대본")
+
+
+def test_said_keywords_counted_across_consecutive_sentences_of_same_part():
+    r = hint_for_pause(SHA, PARTS, "발표 불안이 큽니다\n그래서 대본을 봅니다")
+    assert (r.part_index, r.matched_keywords, r.hint_kind) == (1, ["발표 불안", "대본"], "next_part")
+
+
+def test_shared_keyword_tie_broken_by_recent_sentences():
+    r = match_part(SHA, PARTS, "자신감이 생깁니다\n힌트 덕분입니다")
+    assert (r.status, r.part_index, r.matched_keywords) == ("matched", 3, ["자신감", "힌트"])
+
+
 def _client() -> TestClient:
     return TestClient(create_app(replace(load_settings(), analyzer_provider="mock")))
 

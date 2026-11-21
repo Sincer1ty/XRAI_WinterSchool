@@ -32,7 +32,7 @@ sealed interface DeliveryOutcome {
 
 /** 화면에 보여줄 마지막 처리 결과. */
 enum class NoteKind {
-    Started, PauseRequested, NoHint, PauseFailed, HintSent, HintShowFailed,
+    Started, PauseRequested, NoHint, PauseFailed, HintSent, HintConfirmed, HintNoAck, HintShowFailed,
     NotDeliveredYet, DeliveryCheckFailed, Delivered, HintExpired, HideFailed, Stopped,
 }
 
@@ -153,7 +153,9 @@ class PresentationController {
         val cur = _state.value
         if (cur.phase != PresentationPhase.Running || cur.hint != null || cur.pauseInFlight) return null
         if (cur.recentFinals.isEmpty()) return null
-        val request = PauseRequest(generation, ++nextId, cur.scriptSha256!!, cur.recentFinals.joinToString(" "))
+        // 서버가 최신 문장부터 파트를 판단하도록 문장을 줄바꿈으로 구분한다 (오래된 것 → 최신).
+        val text = cur.recentFinals.joinToString("\n") { it.replace('\n', ' ') }
+        val request = PauseRequest(generation, ++nextId, cur.scriptSha256!!, text)
         pendingPauseId = request.id
         _state.value = cur.copy(pauseInFlight = true, note = PresentationNote(NoteKind.PauseRequested))
         return request
@@ -198,6 +200,22 @@ class PresentationController {
             cur.copy(hint = hint.copy(shownAtMs = nowMs), note = PresentationNote(NoteKind.HintSent, line))
         } else {
             cur.copy(hint = null, note = PresentationNote(NoteKind.HintShowFailed, line))
+        }
+    }
+
+    /**
+     * 표시 요청 뒤 안경 응답. [confirmed]: true 갱신 응답, false 오류 응답, null 제한 시간 내 응답 없음.
+     * 오류면 힌트가 안 보인 것으로 되돌린다. 응답이 없으면 보였는지 모르므로 힌트·표시 시간은 유지한다.
+     */
+    fun onHintAck(hintId: Long, confirmed: Boolean?) {
+        val cur = _state.value
+        val hint = cur.hint
+        if (cur.phase != PresentationPhase.Running || hint == null || hint.id != hintId) return
+        val line = keywordLine(hint.hint.keywords)
+        _state.value = when (confirmed) {
+            true -> cur.copy(note = PresentationNote(NoteKind.HintConfirmed, line))
+            false -> cur.copy(hint = null, note = PresentationNote(NoteKind.HintShowFailed, line))
+            null -> cur.copy(note = PresentationNote(NoteKind.HintNoAck, line))
         }
     }
 

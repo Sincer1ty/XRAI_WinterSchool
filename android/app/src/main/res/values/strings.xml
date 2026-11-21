@@ -284,7 +284,9 @@
     <string name="presentation_note_pause_requested">Pause detected · requesting hint</string>
     <string name="presentation_note_no_hint">No hint to show (server: %1$s)</string>
     <string name="presentation_note_pause_failed">Hint request failed · check the server connection.</string>
-    <string name="presentation_note_hint_sent">Show request sent · check the glasses: %1$s</string>
+    <string name="presentation_note_hint_sent">Show request sent · waiting for the glasses: %1$s</string>
+    <string name="presentation_note_hint_confirmed">Glasses confirmed the update: %1$s</string>
+    <string name="presentation_note_hint_no_ack">No response from the glasses · check the glasses screen: %1$s</string>
     <string name="presentation_note_hint_show_failed">Show request failed: %1$s</string>
     <string name="presentation_note_not_delivered">Keywords not spoken yet · showing up to 5 s</string>
     <string name="presentation_note_delivery_failed">Delivery check failed · showing up to 5 s</string>

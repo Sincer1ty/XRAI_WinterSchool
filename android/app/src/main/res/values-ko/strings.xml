@@ -275,7 +275,9 @@
     <string name="presentation_note_pause_requested">멈춤 감지 · 힌트 요청 중</string>
     <string name="presentation_note_no_hint">띄울 힌트 없음 (서버 판정: %1$s)</string>
     <string name="presentation_note_pause_failed">힌트 요청 실패 · 서버 연결을 확인하세요.</string>
-    <string name="presentation_note_hint_sent">표시 요청 전송됨 · 안경에서 확인하세요: %1$s</string>
+    <string name="presentation_note_hint_sent">표시 요청 전송됨 · 안경 응답 대기: %1$s</string>
+    <string name="presentation_note_hint_confirmed">안경 표시 응답 받음: %1$s</string>
+    <string name="presentation_note_hint_no_ack">안경 응답 없음 · 안경 화면을 확인하세요: %1$s</string>
     <string name="presentation_note_hint_show_failed">표시 요청 실패: %1$s</string>
     <string name="presentation_note_not_delivered">아직 키워드를 말하지 않음 · 5초까지 표시 유지</string>
     <string name="presentation_note_delivery_failed">전달 판단 실패 · 5초까지 표시 유지</string>
