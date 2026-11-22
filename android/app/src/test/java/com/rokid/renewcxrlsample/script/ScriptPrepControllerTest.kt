@@ -185,4 +185,64 @@ class ScriptPrepControllerTest {
         assertEquals("talk.md", c.state.value.sourceName)
         assertEquals(2L, c.state.value.revision)
     }
+    @Test
+    fun lateFileResultDoesNotOverwriteEditedScriptOrNewAnalysis() {
+        val c = ScriptPrepController()
+        c.loadScript("처음 대본", "first.md")
+        val revisionAtRead = c.state.value.revision
+        c.editScript("사용자가 새로 수정한 대본")
+        val current = c.beginAnalysis()!!
+        assertFalse(c.loadScript("뒤늦게 읽은 파일", "late.md", revisionAtRead))
+        assertEquals("사용자가 새로 수정한 대본", c.state.value.script)
+        assertEquals("first.md", c.state.value.sourceName)
+        assertEquals(PrepPhase.Analyzing, c.state.value.phase)
+        assertTrue(c.completeAnalysis(current, analysisFor(current)))
+    }
+
+    @Test
+    fun editBackToOriginalTextStillRejectsOldFileResult() {
+        val c = ScriptPrepController()
+        c.editScript("A")
+        val revisionAtRead = c.state.value.revision
+        c.editScript("AB")
+        c.editScript("A")
+        assertFalse(c.loadScript("파일 내용", "late.txt", revisionAtRead))
+        assertEquals("A", c.state.value.script)
+    }
+
+    @Test
+    fun fileResultAppliesWhenRevisionHasNotChanged() {
+        val c = ScriptPrepController()
+        c.editScript("기존 대본")
+        assertTrue(c.loadScript("불러온 대본", "new.md", c.state.value.revision))
+        assertEquals("불러온 대본", c.state.value.script)
+        assertEquals("new.md", c.state.value.sourceName)
+    }
+
+    @Test
+    fun ownerCancellationLeavesDraftEditableAndRejectsLateResponse() {
+        val c = ScriptPrepController()
+        c.editScript("보존할 대본")
+        val ticket = c.beginAnalysis()!!
+        c.cancelAnalysis(ticket)
+        assertEquals("보존할 대본", c.state.value.script)
+        assertEquals(PrepPhase.Editing, c.state.value.phase)
+        assertFalse(c.completeAnalysis(ticket, analysisFor(ticket)))
+        assertNotNull("재진입 후 새 분석 가능", c.beginAnalysis())
+    }
+
+    @Test
+    fun oldRequestCleanupCannotCancelNewerRequest() {
+        val c = ScriptPrepController()
+        c.editScript("대본")
+        val old = c.beginAnalysis()!!
+        c.cancelAnalysis(old)
+        val current = c.beginAnalysis()!!
+        c.cancelAnalysis(old)
+        assertEquals(PrepPhase.Analyzing, c.state.value.phase)
+        assertTrue(c.completeAnalysis(current, analysisFor(current)))
+        c.cancelAnalysis(current)
+        assertEquals("성공 뒤 finally 정리도 결과를 지우지 않음", PrepPhase.Reviewing, c.state.value.phase)
+    }
+
 }

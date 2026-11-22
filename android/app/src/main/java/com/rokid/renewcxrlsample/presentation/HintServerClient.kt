@@ -23,6 +23,11 @@ class HintServerClient(
     private val onTiming: (RequestTiming) -> Unit = {},
 ) {
 
+    init {
+        require(connectTimeoutMs > 0) { "connectTimeoutMs must be positive" }
+        require(readTimeoutMs > 0) { "readTimeoutMs must be positive; zero disables the timeout" }
+    }
+
     /** Empty-text matching checks both reachability and the prepared script without selecting a hint. */
     suspend fun checkPrepared(serverUrl: String, scriptSha256: String): PrepFailure? {
         val body = JSONObject().put("script_sha256", scriptSha256).put("text", "")

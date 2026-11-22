@@ -5,6 +5,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import org.json.JSONObject
 
 class ScriptAnalysisParserTest {
 
@@ -25,6 +26,25 @@ class ScriptAnalysisParserTest {
     }
 
     @Test
+    fun preservesFullBodyAndLineBreaks() {
+        val full = "첫 문장입니다.\n" + "긴 대본 내용을 생략하지 않습니다. ".repeat(30) + "\n마지막 문장입니다."
+        val part = JSONObject()
+            .put("title", "대본")
+            .put("keywords", org.json.JSONArray(listOf("대본")))
+            .put("hint", "첫 문장입니다.")
+            .put("body", full)
+        val parsed = ScriptAnalysisParser.parseSuccess(body("[" + part.toString() + "]"))
+        assertEquals(full, parsed.parts.single().body)
+    }
+
+    @Test
+    fun legacyResponseHasNoFullBodyInsteadOfUsingHintAsBody() {
+        val parsed = ScriptAnalysisParser.parseSuccess(body("""[{"title":"a","keywords":["k"],"hint":"짧은 구절"}]"""))
+        assertEquals("", parsed.parts.single().body)
+        assertEquals("짧은 구절", parsed.parts.single().hint)
+    }
+
+    @Test
     fun nullRevisionAllowedByParser() {
         assertNull(ScriptAnalysisParser.parseSuccess(body("""[{"title":"a","keywords":["k"],"hint":"h"}]""", "null")).clientRevision)
     }
@@ -41,6 +61,8 @@ class ScriptAnalysisParserTest {
             body("""[{"title":"a","keywords":["  "],"hint":"h"}]"""),
             body("""[{"title":"a","keywords":"k","hint":"h"}]"""),
             body("""[{"title":"a","keywords":[1],"hint":"h"}]"""),
+            body("""[{"title":"a","keywords":["k"],"hint":"h","body":123}]"""),
+            body("""[{"title":"a","keywords":["k"],"hint":"h","body":null}]"""),
             body("""[{"title":"a","keywords":["k"]}]"""),
             body("""[{"title":"a","keywords":["k"],"hint":"h"}]""", "\"x\""),
         )

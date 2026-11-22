@@ -263,10 +263,10 @@
     <string name="presentation_voice_speaking">말하는 중</string>
     <string name="presentation_voice_silent">조용함</string>
     <string name="presentation_voice_lost">입력 끊김 (침묵으로 세지 않음)</string>
-    <string name="presentation_rms_line">소리 크기 %1$s · 최대 %2$s · 발화 기준 %3$s</string>
+    <string name="presentation_rms_line">소리 크기 %1$s · 최대 %2$s · RMS 참고값 %3$s</string>
     <string name="presentation_stt_line">인식: %1$s</string>
     <string name="presentation_partial_line">중간 결과: %1$s</string>
-    <string name="presentation_threshold_label">발화 기준 (RMS) · 말할 때 소리 크기보다 낮고 조용할 때보다 높게</string>
+    <string name="presentation_threshold_label">발화 판정: WebRTC VAD (RMS 참고값은 변경하지 않음)</string>
     <string name="presentation_halt_connection">안경 연결이 끊겼습니다. 재연결 후 발표를 다시 시작하세요.</string>
     <string name="presentation_halt_audio">안경 음성 수신이 멈췄습니다. 발표를 다시 시작하세요.</string>
     <string name="presentation_halt_stt">음성 인식이 멈췄습니다: %1$s</string>
@@ -331,4 +331,9 @@
     <string name="presentation_timing_line">서버 응답(%1$s): 전체 %2$s · 서버 %3$s · 네트워크 %4$s</string>
     <string name="presentation_timing_none">서버 응답 시간: 기록 없음</string>
     <string name="presentation_pause_label">멈춤 판단 시간: %1$.1f초 (기본 3초)</string>
+    <string name="script_prep_local_analysis_notice">로컬 KeyBERT 분석 결과입니다. 발표 전에 키워드가 대본과 맞는지 확인해 주세요.</string>
+    <string name="script_prep_part_body">대본</string>
+    <string name="script_prep_part_body_unavailable">전체 대본이 없는 분석 결과입니다. 서버를 업데이트한 뒤 대본을 다시 분석해 주세요.</string>
+    <string name="presentation_retry_hide">안경 화면 다시 비우기</string>
+    <string name="presentation_live_hiding">안경 화면 비우기 대기 중</string>
 </resources>

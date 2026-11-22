@@ -28,6 +28,10 @@ class SilenceDetector(
     private var spokeSincePause = false
     private var speaking = false
     private var inputRevision = 0L
+    private var speechRevision = 0L
+
+    @Synchronized
+    fun speechRevision(): Long = speechRevision
 
     /** Brief speech/input gaps also invalidate a pending hint between UI ticks. */
     @Synchronized
@@ -41,6 +45,7 @@ class SilenceDetector(
     @Synchronized
     fun reset() {
         inputRevision++
+        speechRevision++
         lastChunkAt = null
         silenceSince = 0L
         spokeSincePause = false
@@ -48,15 +53,22 @@ class SilenceDetector(
     }
 
     @Synchronized
-    fun onChunk(rms: Double, nowMs: Long) {
+    fun onChunk(rms: Double, nowMs: Long) = onVoice(rms >= speechRms, nowMs)
+
+    /** 발표 화면은 VAD 결과를 사용하고, 기존 RMS 진단 호출은 유지한다. */
+    @Synchronized
+    fun onVoice(isSpeech: Boolean, nowMs: Long) {
         val last = lastChunkAt
         if (last == null || nowMs - last > inputLostMs) {
             silenceSince = nowMs
             inputRevision++
         }
-        if (rms >= speechRms && !speaking) inputRevision++
+        if (isSpeech && !speaking) {
+            inputRevision++
+            speechRevision++
+        }
         lastChunkAt = nowMs
-        speaking = rms >= speechRms
+        speaking = isSpeech
         if (speaking) {
             silenceSince = nowMs
             spokeSincePause = true

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -22,13 +23,12 @@ from .config import Settings
 from .hint_engine import _norm
 from .schemas import ScriptPart
 
-TITLE_MAX = 30
-HINT_MAX = 30
 KEYWORDS_MAX = 5
 
 # 이번 요청에서 LLM API 응답을 기다린 시간(ms). 서버 처리 시간과 분리해 기록한다.
 # 분석기를 직접 await하는 엔드포인트에서 읽는다 (같은 컨텍스트).
 llm_wait_ms: ContextVar[float | None] = ContextVar("llm_wait_ms", default=None)
+analysis_source: ContextVar[str | None] = ContextVar("analysis_source", default=None)
 # 안경에 한눈에 보이는 회상 단서 길이. 잘라 쓰면 원문 매칭이 깨지므로 넘으면 버린다.
 KEYWORD_LEN_MAX = 12
 
@@ -64,9 +64,28 @@ class Analyzer(Protocol):
 # 공통 정규화·검증
 # ---------------------------------------------------------------------------
 
-def _clip(text: str, limit: int) -> str:
-    text = re.sub(r"\s+", " ", text).strip()
-    return text if len(text) <= limit else text[:limit].rstrip() + "…"
+def _source_sections(raw_parts: list[dict], script: str) -> list[tuple[str | None, str]]:
+    """AI는 시작 구절만 지정한다. 카드 본문은 누락·재작성 없이 원문 구간에서 가져온다."""
+    if len(raw_parts) == 1:
+        return [(None, script)]
+    starts: list[int] = []
+    cursor = 0
+    for i, raw in enumerate(raw_parts, start=1):
+        quote = raw.get("start_quote")
+        if not isinstance(quote, str) or not quote.strip():
+            raise AnalyzerError("analysis_invalid_format", f"{i}번 파트의 원문 시작 구절이 없습니다.")
+        quote = quote.strip()
+        start = script.find(quote, cursor)
+        if start < 0 or script.find(quote, start + 1) >= 0:
+            raise AnalyzerError("analysis_invalid_format", f"{i}번 파트의 원문 위치를 확정할 수 없습니다.")
+        if not starts and script[:start].strip():
+            raise AnalyzerError("analysis_invalid_format", "첫 파트가 대본의 시작 부분을 누락했습니다.")
+        starts.append(start)
+        cursor = start + len(quote)
+    return [
+        (None, script[start:end].strip())
+        for start, end in zip(starts, starts[1:] + [len(script)])
+    ]
 
 
 def normalize_parts(
@@ -94,10 +113,13 @@ def normalize_parts(
             f"대본 제목은 {len(sections)}개인데 AI가 {len(raw_parts)}개 파트로 나눴습니다. 다시 분석하세요.",
         )
 
+    if not all(isinstance(raw, dict) for raw in raw_parts):
+        raise AnalyzerError("analysis_invalid_format", "파트 형식이 올바르지 않습니다.")
+    body_sections = sections
+    if body_sections is None and script is not None:
+        body_sections = _source_sections(raw_parts, script)
     checked: list[tuple[str, str, list[str]]] = []
     for i, raw in enumerate(raw_parts, start=1):
-        if not isinstance(raw, dict):
-            raise AnalyzerError("analysis_invalid_format", f"{i}번 파트 형식이 올바르지 않습니다.")
         title = raw.get("title")
         hint = raw.get("hint")
         keywords = raw.get("keywords")
@@ -109,10 +131,10 @@ def normalize_parts(
             raise AnalyzerError("analysis_invalid_format", f"{i}번 파트의 키워드 형식이 올바르지 않습니다.")
 
         part_source = source
-        if sections is not None:
-            heading, body = sections[i - 1]
+        if body_sections is not None:
+            heading, body = body_sections[i - 1]
             # 제목은 소리 내어 읽지 않으므로 키워드는 본문에서만 찾는다.
-            part_source = _norm(body)
+            part_source = _norm(_spoken_body(body))
             title = heading or title
         cleaned: list[str] = []
         for kw in keywords:
@@ -132,10 +154,13 @@ def normalize_parts(
         checked.append((title, hint, cleaned))
 
     checked = _drop_shared_keywords(checked)
-    if sections is not None:
-        checked = _drop_keywords_in_other_sections(checked, sections)
+    if body_sections is not None:
+        checked = _drop_keywords_in_other_sections(checked, body_sections)
     return [
-        ScriptPart(index=i, title=_clip(title, TITLE_MAX), keywords=kws[:KEYWORDS_MAX], hint=_clip(hint, HINT_MAX))
+        ScriptPart(
+            index=i, title=title.strip(), keywords=kws[:KEYWORDS_MAX], hint=hint.strip(),
+            body=body_sections[i - 1][1] if body_sections is not None else "",
+        )
         for i, (title, hint, kws) in enumerate(checked, start=1)
     ]
 
@@ -148,7 +173,7 @@ def _drop_keywords_in_other_sections(
 
     빼고 나면 키워드가 없는 파트는 원래 키워드를 그대로 둔다.
     """
-    texts = [_norm(body) for _, body in sections]
+    texts = [_norm(_spoken_body(body)) for _, body in sections]
     result = []
     for i, (title, hint, kws) in enumerate(parts):
         unique = [kw for kw in kws if not any(_norm(kw) in t for j, t in enumerate(texts) if j != i)]
@@ -196,6 +221,11 @@ _STOPWORDS = {
 }
 
 
+def _spoken_body(text: str) -> str:
+    """병합한 본문에는 제목을 보존하되 발화 키워드 후보에서는 제외한다."""
+    return "\n".join(line for line in text.splitlines() if not _HEADING_RE.match(line))
+
+
 def _strip_particle(token: str) -> str:
     for p in _PARTICLES:
         if len(token) > len(p) + 1 and token.endswith(p):
@@ -228,7 +258,8 @@ def _merge_to_limit(sections: list[tuple[str | None, str]], limit: int) -> list[
         # 가장 짧은 인접 쌍을 합친다.
         best = min(range(len(sections) - 1), key=lambda i: len(sections[i][1]) + len(sections[i + 1][1]))
         (t1, b1), (t2, b2) = sections[best], sections[best + 1]
-        sections[best : best + 2] = [(t1 or t2, f"{b1}\n\n{b2}".strip())]
+        tail = f"# {t2}\n{b2}" if t2 else b2
+        sections[best : best + 2] = [(t1 or t2, f"{b1}\n\n{tail}".strip())]
     return sections
 
 
@@ -277,7 +308,7 @@ class MockAnalyzer:
         raw_parts = []
         for title, body in sections:
             source = body or title or ""
-            kws = _keywords(f"{title or ''}\n{body}")
+            kws = _keywords(_spoken_body(body))
             if not kws:
                 kws = [source.strip()[:10].strip()]
             raw_parts.append(
@@ -287,7 +318,7 @@ class MockAnalyzer:
                     "hint": _first_phrase(source) or source,
                 }
             )
-        return normalize_parts(raw_parts, self.max_parts, script)
+        return normalize_parts(raw_parts, self.max_parts, script, sections)
 
 
 # ---------------------------------------------------------------------------
@@ -311,8 +342,11 @@ SYSTEM_PROMPT = """너는 발표 대본을 분석해 발표자가 안경 화면�
      · 다른 파트에도 나오는 단어("발표", "발표자"처럼 대본 전체에 반복되는 말)는 쓰지 않고,
        그 파트에서만 나오는 표현을 고른다. 발표 중 이 키워드로 현재 파트를 구분한다.
    - hint: 그 파트를 시작할 때 말하는 첫 구절 (대본 그대로, 25자 이내)
+   - start_quote: 파트가 시작되는 원문을 연속해서 그대로 복사한다. 위치를 구분할 수 있도록 충분한 길이로 고른다.
+     · 서버가 제목별 구간을 고정하지 않았다면 첫 파트는 대본의 맨 처음에서 시작한다. 제목도 원문에 있으면 포함한다.
+     · 원문의 띄어쓰기·문장부호·줄바꿈을 바꾸지 않는다. 파트 시작 구절은 원문 순서를 따른다.
 3. 다음 JSON 객체 하나만 출력한다. 다른 글은 쓰지 않는다.
-{{"parts": [{{"title": "...", "keywords": ["..."], "hint": "..."}}]}}"""
+{{"parts": [{{"title": "...", "keywords": ["..."], "hint": "...", "start_quote": "..."}}]}}"""
 
 
 class OpenAICompatibleAnalyzer:
@@ -337,28 +371,38 @@ class OpenAICompatibleAnalyzer:
         tried: list[str] = []
         last: AnalyzerError | None = None
         try:
-            async with httpx.AsyncClient(transport=self.transport) as client:
-                for i, model in enumerate(models):
-                    remaining = deadline - time.perf_counter()
-                    if tried and remaining < MIN_ATTEMPT_SECONDS:
-                        break
-                    is_last = i == len(models) - 1
-                    # 대체 모델이 남아 있으면 한 모델이 시간을 다 쓰지 않게 나눈다.
-                    timeout = remaining if is_last else min(s.attempt_timeout_seconds, remaining)
-                    tried.append(model)
-                    try:
-                        parts = await self._call_model(client, model, script, timeout)
-                    except AnalyzerError as e:
-                        last = e
-                        if not e.retryable or is_last:
+            async with asyncio.timeout(s.openai_timeout_seconds):
+                async with httpx.AsyncClient(transport=self.transport) as client:
+                    for i, model in enumerate(models):
+                        remaining = deadline - time.perf_counter()
+                        if tried and remaining < MIN_ATTEMPT_SECONDS:
                             break
-                        logger.warning("model %s failed (%s), trying next model", model, e.code)
-                        continue
-                    if model != s.openai_model:
-                        logger.warning("analysis used fallback model %s (tried %s)", model, ", ".join(tried))
-                    else:
-                        logger.info("analysis used model %s", model)
-                    return parts
+                        is_last = i == len(models) - 1
+                        timeout = remaining if is_last else min(s.attempt_timeout_seconds, remaining)
+                        tried.append(model)
+                        try:
+                            # HTTPX의 청크별 읽기 제한과 별도로 한 시도의 전체 경과 시간을 제한한다.
+                            async with asyncio.timeout(timeout):
+                                parts = await self._call_model(client, model, script, timeout)
+                        except TimeoutError:
+                            last = AnalyzerError("llm_timeout", "AI 응답 시간이 초과되었습니다.", 504, retryable=True)
+                            if is_last:
+                                break
+                            logger.warning("model %s exceeded its deadline; trying next model", model)
+                            continue
+                        except AnalyzerError as error:
+                            last = error
+                            if not error.retryable or is_last:
+                                break
+                            logger.warning("model %s failed (%s), trying next model", model, error.code)
+                            continue
+                        if model != s.openai_model:
+                            logger.warning("analysis used fallback model %s (tried %s)", model, ", ".join(tried))
+                        else:
+                            logger.info("analysis used model %s", model)
+                        return parts
+        except TimeoutError:
+            last = AnalyzerError("llm_timeout", "AI 분석 전체 대기 시간이 초과되었습니다.", 504, retryable=True)
         finally:
             # 여러 모델을 시도했으면 모두 합친 AI 대기 시간.
             llm_wait_ms.set((time.perf_counter() - started) * 1000)
@@ -366,7 +410,7 @@ class OpenAICompatibleAnalyzer:
         assert last is not None
         if len(tried) > 1:
             raise AnalyzerError(
-                last.code, f"{last.message} (시도한 모델: {', '.join(tried)})", last.status_code
+                last.code, f"{last.message} (시도한 모델: {', '.join(tried)})", last.status_code, retryable=last.retryable
             )
         raise last
 
@@ -417,8 +461,9 @@ class OpenAICompatibleAnalyzer:
                                             "maxItems": KEYWORDS_MAX,
                                         },
                                         "hint": {"type": "string"},
+                                        "start_quote": {"type": "string"},
                                     },
-                                    "required": ["title", "keywords", "hint"],
+                                    "required": ["title", "keywords", "hint", "start_quote"],
                                     "additionalProperties": False,
                                 },
                             },
@@ -480,8 +525,15 @@ class OpenAICompatibleAnalyzer:
 
 
 def build_analyzer(settings: Settings) -> Analyzer:
+    if settings.analyzer_provider == "keybert":
+        from .local_analyzer import KeyBertAnalyzer
+        return KeyBertAnalyzer(settings)
     if settings.analyzer_provider in {"openai", "omniroute", "gemini"}:
-        return OpenAICompatibleAnalyzer(settings)
+        primary = OpenAICompatibleAnalyzer(settings)
+        if settings.analyzer_provider == "gemini" and settings.keybert_fallback:
+            from .local_analyzer import KeyBertFallback, KeyBertAnalyzer
+            return KeyBertFallback(primary, KeyBertAnalyzer(settings))
+        return primary
     if settings.analyzer_provider == "mock":
         return MockAnalyzer(settings.max_parts)
     raise ValueError(f"알 수 없는 ANALYZER_PROVIDER: {settings.analyzer_provider}")

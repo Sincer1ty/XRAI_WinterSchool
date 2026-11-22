@@ -17,6 +17,11 @@ class ScriptAnalysisClient(
     private val onTiming: (RequestTiming) -> Unit = {},
 ) {
 
+    init {
+        require(connectTimeoutMs > 0) { "connectTimeoutMs must be positive" }
+        require(readTimeoutMs > 0) { "readTimeoutMs must be positive; zero disables the timeout" }
+    }
+
     suspend fun analyze(serverUrl: String, script: String, revision: Long): AnalysisOutcome =
         withContext(Dispatchers.IO) {
             val url = try {

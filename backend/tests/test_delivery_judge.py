@@ -18,8 +18,9 @@ def test_keyword_spoken_is_delivered_even_with_different_spacing():
     assert r.stt_text == "저희는 스마트안경을 씁니다"
 
 
-def test_hint_phrase_spoken_is_delivered():
-    assert judge_delivery("sha", "그래서 저희는", [], "그래서 저희는 시작했습니다").delivered is True
+def test_hint_phrase_without_displayed_keyword_is_not_delivered():
+    assert judge_delivery("sha", "그래서 저희는", [], "그래서 저희는 시작했습니다").delivered is False
+    assert judge_delivery("sha", "그래서 저희는", ["스마트 안경"], "그래서 저희는 시작했습니다").delivered is False
 
 
 def test_resuming_with_unrelated_words_is_not_delivered():

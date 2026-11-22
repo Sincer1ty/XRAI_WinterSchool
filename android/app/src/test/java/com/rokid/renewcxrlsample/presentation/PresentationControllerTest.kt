@@ -46,6 +46,8 @@ class PresentationControllerTest {
         assertNull(c.state.value.hint)
         assertEquals("시간 초과는 전달 완료가 아님", NoteKind.HintExpired, c.state.value.note?.kind)
         assertFalse("이미 숨김", c.expireIfDue(SHOWN_AT + 6_000))
+        assertNull("숨김 전송 성공 전에는 새 힌트를 요청하지 않음", c.onPause())
+        c.onHideSent()
         assertNotNull("숨긴 뒤 다음 멈춤에 다시 요청 가능", c.onPause())
     }
 
@@ -185,7 +187,9 @@ class PresentationControllerTest {
         assertNull(c.state.value.hint)
         assertEquals(NoteKind.Delivered, c.state.value.note?.kind)
 
-        // 숨긴 뒤 다음 멈춤에 다시 힌트를 요청할 수 있다
+        // 실제 숨김 전송 성공 후 다음 쉼을 허용한다.
+        assertNull(c.onPause())
+        c.onHideSent()
         assertNotNull(c.onPause())
         assertTrue(shown.id > 0)
     }
@@ -289,6 +293,7 @@ class PresentationControllerTest {
     fun stopReportsWhetherAHintMustBeHidden() {
         val (c, _) = withHint()
         assertTrue(c.stop())
+        c.onHideSent()
         assertFalse("중복 종료", c.stop())
         assertFalse(running().stop())
     }
@@ -335,6 +340,145 @@ class PresentationControllerTest {
         assertEquals(HaltReason.ServerUnavailable, c.state.value.haltReason)
         assertNull(c.completePause(request, PauseOutcome.Hint(hint)))
         assertNull(c.onPause())
+    }
+
+    @Test
+    fun keywordWithoutVadSpeechAfterShowCannotHideHint() {
+        val (c, _) = withHint()
+        assertFalse(c.onPartial("대본", allowDelivery = false))
+        assertNull(c.onFinal("대본", allowDelivery = false))
+        assertNotNull(c.state.value.hint)
+        assertTrue(c.onPartial("불안", allowDelivery = true))
+        assertNull(c.state.value.hint)
+    }
+
+    @Test
+    fun lateFinalUsesOnlyWordsAddedAfterDisplayedPartial() {
+        val c = running()
+        c.onFinal("발표를 시작합니다")
+        val shown = c.completePause(c.onPause()!!, PauseOutcome.Hint(hint))!!
+        c.onHintRendered(shown.id, true, SHOWN_AT, partialAtShow = "대본")
+        assertNull(c.onFinal("대 본"))
+        assertNotNull(c.state.value.hint)
+        assertEquals("불안을 줄입니다", c.onFinal("불안을 줄입니다")!!.text)
+    }
+
+    @Test
+    fun changedPreDisplayPartialIsNotTreatedAsNewKeywordSpeech() {
+        val c = running()
+        c.onFinal("발표를 시작합니다")
+        val shown = c.completePause(c.onPause()!!, PauseOutcome.Hint(hint))!!
+        c.onHintRendered(shown.id, true, SHOWN_AT, partialAtShow = "대본")
+        assertFalse(c.onPartial("대 본 그래서"))
+        assertFalse(c.onPartial("불안한 대본"))
+        assertNull(c.onFinal("불안한 대본"))
+        assertTrue(c.onPartial("불안"))
+    }
+
+    @Test
+    fun finalExcludesPreDisplayWordsFromDeliveryRequest() {
+        val c = running()
+        c.onFinal("발표를 시작합니다")
+        val shown = c.completePause(c.onPause()!!, PauseOutcome.Hint(hint))!!
+        c.onHintRendered(shown.id, true, SHOWN_AT, partialAtShow = "대본")
+        val request = c.onFinal("대 본 그래서 불안")!!
+        assertEquals("그래서불안", request.text)
+        assertTrue(c.completeDelivery(request, DeliveryOutcome.Delivered))
+    }
+
+    @Test
+    fun displayAcknowledgementStartsFullVisibleInterval() {
+        val (c, shown) = withHint()
+        c.onHintAck(shown.id, true, SHOWN_AT + 1_000)
+        assertEquals(5_000L, c.remainingMs(SHOWN_AT + 1_000))
+        assertFalse(c.expireIfDue(SHOWN_AT + 5_000))
+        assertTrue(c.expireIfDue(SHOWN_AT + 6_000))
+    }
+
+    @Test
+    fun failedKeywordHidePreservesPreviousTextAndBlocksNewHints() {
+        val (c, shown) = withHint()
+        assertTrue(c.onPartial("대본"))
+        c.onHideFailed()
+        assertEquals(shown.id, c.state.value.pendingHide?.hint?.id)
+        assertEquals(listOf("대본", "불안"), c.state.value.pendingHide?.hint?.hint?.keywords)
+        assertEquals(NoteKind.HideFailed, c.state.value.note?.kind)
+        assertNull(c.onPause())
+        assertNull("숨김 대기 중 새 전달 요청 없음", c.onFinal("새로 말한 문장"))
+        c.onHideFailed()
+        assertEquals("실패가 반복돼도 원래 숨김 이유를 유지", NoteKind.Delivered, c.state.value.pendingHide?.note?.kind)
+        c.onHideSent()
+        assertNull(c.state.value.pendingHide)
+        assertEquals(NoteKind.Delivered, c.state.value.note?.kind)
+        assertEquals(PresentationPhase.Running, c.state.value.phase)
+        assertNotNull(c.onPause())
+    }
+
+    @Test
+    fun failedExpiryHideKeepsPendingTextWithoutCountingItAsDelivered() {
+        val (c, shown) = withHint()
+        assertTrue(c.expireIfDue(SHOWN_AT + 5_000))
+        c.onHideFailed()
+        assertEquals(shown.id, c.state.value.pendingHide?.hint?.id)
+        assertEquals(NoteKind.HintExpired, c.state.value.pendingHide?.note?.kind)
+        assertFalse("중복 만료 요청 없음", c.expireIfDue(SHOWN_AT + 6_000))
+        c.onHideSent()
+        assertEquals(NoteKind.HintExpired, c.state.value.note?.kind)
+        assertNull(c.state.value.pendingHide)
+    }
+
+    @Test
+    fun failedServerDeliveryHideKeepsTextUntilSuccessfulRetry() {
+        val (c, shown) = withHint()
+        val delivery = c.onFinal("대본")!!
+        assertTrue(c.completeDelivery(delivery, DeliveryOutcome.Delivered))
+        c.onHideFailed()
+        assertEquals(shown.id, c.state.value.pendingHide?.hint?.id)
+        assertNull(c.onPause())
+        c.onHideSent()
+        assertNull(c.state.value.pendingHide)
+        assertEquals(NoteKind.Delivered, c.state.value.note?.kind)
+    }
+
+    @Test
+    fun failedStopHideCanBeRetriedByStoppingAgain() {
+        val (c, shown) = withHint()
+        assertTrue(c.stop())
+        c.onHideFailed()
+        assertEquals(PresentationPhase.Stopped, c.state.value.phase)
+        assertEquals(shown.id, c.state.value.pendingHide?.hint?.id)
+        assertTrue("종료 상태여도 숨김 대기가 있으면 재시도", c.stop())
+        c.onHideSent()
+        assertNull(c.state.value.pendingHide)
+        assertFalse(c.stop())
+        assertEquals(NoteKind.Stopped, c.state.value.note?.kind)
+    }
+
+    @Test
+    fun restartingCannotForgetFailedHideFromPreviousPresentation() {
+        val (c, shown) = withHint()
+        c.stop()
+        c.onHideFailed()
+        assertTrue(c.start("new-script"))
+        c.onFinal("새 발표 문장")
+        assertEquals(shown.id, c.state.value.pendingHide?.hint?.id)
+        assertNull(c.onPause())
+        c.onHideSent()
+        assertEquals(NoteKind.Started, c.state.value.note?.kind)
+        assertEquals("new-script", c.onPause()!!.scriptSha256)
+    }
+
+    @Test
+    fun failedInitialClearBlocksHintsEvenWithoutKnownText() {
+        val c = running()
+        c.onFinal("새 발표 문장")
+        c.requestHide()
+        c.onHideFailed()
+        assertNotNull(c.state.value.pendingHide)
+        assertNull(c.state.value.pendingHide?.hint)
+        assertNull(c.onPause())
+        c.onHideSent()
+        assertNotNull(c.onPause())
     }
 
     private companion object {

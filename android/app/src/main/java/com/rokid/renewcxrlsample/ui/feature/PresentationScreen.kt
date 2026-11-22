@@ -82,6 +82,45 @@ fun PresentationScreen(
         subtitle = stringResource(R.string.presentation_subtitle),
         showBack = true,
         onBack = onBack,
+        responsive = true,
+        bottomBar = {
+            when {
+                preparing || running -> OutlinedButton(
+                    onClick = viewModel::stop,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(if (preparing) R.string.presentation_cancel_start else R.string.presentation_stop))
+                }
+                p.pendingHide != null && ui.glassOpened -> OutlinedButton(
+                    onClick = viewModel::retryHide,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.presentation_retry_hide))
+                }
+                !prep.isReady -> Button(onClick = onReviewScript, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.presentation_review_script))
+                }
+                !ui.connected -> OutlinedButton(onClick = onConnectGlasses, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.presentation_connect_glasses))
+                }
+                !ui.glassOpened -> OutlinedButton(
+                    onClick = viewModel::openGlassView,
+                    enabled = !ui.glassOpening,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(
+                        if (ui.glassOpening) R.string.presentation_glass_opening else R.string.presentation_open_glass_step,
+                    ))
+                }
+                else -> Button(
+                    onClick = { onStart(onDevice) },
+                    enabled = !ui.glassOpening,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.presentation_start_step))
+                }
+            }
+        },
     ) {
         FlowStepIndicator(
             steps = listOf(
@@ -103,14 +142,9 @@ fun PresentationScreen(
                 else -> R.string.presentation_flow_ready
             })),
         )
-        if (!running && !preparing) {
+        if (prep.isReady && !running && !preparing) {
             TextButton(onClick = onReviewScript) {
                 Text(stringResource(R.string.presentation_review_script))
-            }
-        }
-        if (prep.isReady && !ui.connected) {
-            OutlinedButton(onClick = onConnectGlasses, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.presentation_connect_glasses))
             }
         }
         ui.glassOpenError?.let {
@@ -119,31 +153,9 @@ fun PresentationScreen(
                 else R.string.presentation_glass_open_failed
             ))
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = viewModel::openGlassView,
-                enabled = prep.isReady && ui.connected && !ui.glassOpened &&
-                    !ui.glassOpening && !running && !preparing,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text(stringResource(when {
-                    ui.glassOpened -> R.string.presentation_glass_connected
-                    ui.glassOpening -> R.string.presentation_glass_opening
-                    else -> R.string.presentation_open_glass_step
-                }))
-            }
-            Button(
-                onClick = { onStart(onDevice) },
-                enabled = prep.isReady && ui.connected && ui.glassOpened &&
-                    !ui.glassOpening && !running && !preparing,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text(stringResource(R.string.presentation_start_step))
-            }
-        }
-        if (preparing || running || p.phase == PresentationPhase.Halted) {
+        if (p.phase == PresentationPhase.Halted) {
             OutlinedButton(onClick = viewModel::stop, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(if (preparing) R.string.presentation_cancel_start else R.string.presentation_stop))
+                Text(stringResource(R.string.presentation_stop))
             }
         }
         DevStatusCard(
@@ -153,7 +165,7 @@ fun PresentationScreen(
                 if (running) stringResource(R.string.presentation_phase_line, phaseLabel(p.phase)) else null,
                 // 중지 사유가 있으면 그 원인만 보인다. 요청 실패 안내("서버 연결 확인")가
                 // "서버에 대본 없음"과 함께 떠 원인이 엇갈리지 않게 한다.
-                p.note?.takeUnless { preparing || p.phase == PresentationPhase.Halted }?.let { noteText(it) },
+                p.note?.takeUnless { preparing || (p.phase == PresentationPhase.Halted && it.kind != NoteKind.HideFailed) }?.let { noteText(it) },
                 p.haltReason?.takeIf { p.phase == PresentationPhase.Halted }?.let { haltText(it, ui) },
             ),
         )
@@ -162,7 +174,12 @@ fun PresentationScreen(
         PrerequisiteHint(stringResource(R.string.presentation_keep_screen))
 
         SceneSectionTitle(stringResource(R.string.presentation_hint_title))
-        GlassPreview(p.hint?.let { keywordLine(it.hint.keywords) })
+        GlassPreview((p.hint ?: p.pendingHide?.hint)?.let { keywordLine(it.hint.keywords) })
+        if (running && p.pendingHide != null && ui.glassOpened) {
+            OutlinedButton(onClick = viewModel::retryHide, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.presentation_retry_hide))
+            }
+        }
         Text(
             stringResource(R.string.presentation_recent_line, p.recentFinals.joinToString(" / ").ifBlank { none }),
             style = MaterialTheme.typography.bodySmall,
@@ -173,9 +190,13 @@ fun PresentationScreen(
             Text(stringResource(if (showSettings) R.string.presentation_settings_hide else R.string.presentation_settings_show))
         }
         if (showSettings) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Switch(checked = onDevice, onCheckedChange = { onDevice = it }, enabled = !running && !preparing)
-                Text(stringResource(R.string.presentation_on_device))
+                Text(stringResource(R.string.presentation_on_device), modifier = Modifier.weight(1f))
             }
             SceneSectionTitle(stringResource(R.string.presentation_voice_title))
             DevStatusCard(
@@ -204,6 +225,7 @@ fun PresentationScreen(
                 value = ui.speechRms.toFloat(),
                 onValueChange = { viewModel.setSpeechRms(it.toDouble()) },
                 valueRange = SPEECH_RMS_MIN..SPEECH_RMS_MAX,
+                enabled = false,
             )
         }
     }
@@ -243,6 +265,7 @@ private fun liveStatus(p: PresentationState, ui: PresentationUiState): String {
     }
     val remaining = ui.hintRemainingMs
     return when {
+        p.pendingHide != null -> stringResource(R.string.presentation_live_hiding)
         p.hint != null && remaining != null ->
             stringResource(R.string.presentation_live_showing, ((remaining + 999) / 1000).toInt())
         p.hint != null -> stringResource(R.string.presentation_live_sending)

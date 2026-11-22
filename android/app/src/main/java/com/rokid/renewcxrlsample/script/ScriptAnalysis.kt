@@ -8,6 +8,7 @@ data class ScriptPart(
     val title: String,
     val keywords: List<String>,
     val hint: String,
+    val body: String = "",
 )
 
 /** `POST /api/v1/scripts/analyze` 성공 응답. */

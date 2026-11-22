@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.rokid.renewcxrlsample.script.AnalysisTicket
 import com.rokid.renewcxrlsample.script.ScriptAnalysisClient
 import com.rokid.renewcxrlsample.script.ScriptFileReader
 import com.rokid.renewcxrlsample.script.ScriptPrepRepository
@@ -44,9 +45,13 @@ class ScriptPrepViewModel(application: Application) : AndroidViewModel(applicati
     val fileLoading: StateFlow<Boolean> = _fileLoading.asStateFlow()
 
     private var analysisJob: Job? = null
+    private var analysisTicket: AnalysisTicket? = null
+    private var fileLoadJob: Job? = null
+    private var fileLoadVersion = 0L
 
     fun onScriptChanged(text: String) {
         if (text == state.value.script) return
+        cancelFileLoad()
         analysisJob?.cancel()
         _fileError.value = null
         controller.editScript(text)
@@ -59,37 +64,74 @@ class ScriptPrepViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun loadFile(uri: Uri) {
+        fileLoadJob?.cancel()
+        val version = ++fileLoadVersion
+        val revision = state.value.revision
         _fileLoading.value = true
         _fileError.value = null
-        viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                ScriptFileReader.read(getApplication<Application>().contentResolver, uri)
-            }
-            _fileLoading.value = false
-            when (result) {
-                is ScriptFileReader.Result.Success -> {
-                    if (result.text != state.value.script) analysisJob?.cancel()
-                    controller.loadScript(result.text, result.name)
+        fileLoadJob = viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    ScriptFileReader.read(getApplication<Application>().contentResolver, uri)
                 }
-                is ScriptFileReader.Result.Failure -> _fileError.value = result.error
+                if (version != fileLoadVersion || revision != state.value.revision) return@launch
+                when (result) {
+                    is ScriptFileReader.Result.Success -> {
+                        val changed = result.text != state.value.script
+                        if (controller.loadScript(result.text, result.name, revision) && changed) {
+                            analysisJob?.cancel()
+                        }
+                    }
+                    is ScriptFileReader.Result.Failure -> _fileError.value = result.error
+                }
+            } finally {
+                if (version == fileLoadVersion) {
+                    _fileLoading.value = false
+                    fileLoadJob = null
+                }
             }
         }
+    }
+
+    private fun cancelFileLoad() {
+        fileLoadVersion++
+        fileLoadJob?.cancel()
+        fileLoadJob = null
+        _fileLoading.value = false
     }
 
     fun analyze() {
         if (_serverUrl.value.isBlank()) return
         val url = _serverUrl.value
         val ticket = controller.beginAnalysis(url) ?: return
+        analysisTicket = ticket
         analysisJob = viewModelScope.launch {
-            val outcome = client.analyze(url, ticket.script, ticket.revision)
-            // 대본이 그사이 바뀌었으면 controller가 결과를 버린다.
-            controller.completeAnalysis(ticket, outcome)
+            try {
+                val outcome = client.analyze(url, ticket.script, ticket.revision)
+                controller.completeAnalysis(ticket, outcome)
+            } finally {
+                // 이전 작업의 취소·종료가 새 요청을 정리하지 않도록 요청 번호를 확인한다.
+                controller.cancelAnalysis(ticket)
+                if (analysisTicket == ticket) {
+                    analysisTicket = null
+                    analysisJob = null
+                }
+            }
         }
     }
 
     fun cancelAnalysis() {
         analysisJob?.cancel()
         controller.cancelAnalysis()
+    }
+
+    override fun onCleared() {
+        analysisTicket?.let { controller.cancelAnalysis(it) }
+        analysisTicket = null
+        analysisJob?.cancel()
+        analysisJob = null
+        cancelFileLoad()
+        super.onCleared()
     }
 
     fun confirmReady() {

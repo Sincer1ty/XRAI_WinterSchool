@@ -17,6 +17,9 @@ plugins {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        maven("https://jitpack.io") {
+            content { includeGroup("com.github.gkonovalov.android-vad") }
+        }
         maven { url = uri("https://maven.rokid.com/repository/maven-public/") }
         maven { url = uri("https://maven.aliyun.com/repository/google") }
         google()

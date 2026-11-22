@@ -3,6 +3,16 @@ package com.rokid.renewcxrlsample.ui.design
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,6 +40,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -44,11 +55,52 @@ fun DevSampleScaffold(
     subtitle: String? = null,
     showBack: Boolean = false,
     onBack: () -> Unit = {},
+    responsive: Boolean = false,
+    bottomBar: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Scaffold(
+        modifier = if (responsive) Modifier.imePadding() else Modifier,
+        bottomBar = {
+            bottomBar?.let { actions ->
+                Surface(shadowElevation = 4.dp) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                            .navigationBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) { actions() }
+                }
+            }
+        },
         topBar = {
-            TopAppBar(
+            if (responsive) {
+                Surface(color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (showBack) {
+                            IconButton(onClick = onBack) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = stringResource(com.rokid.renewcxrlsample.R.string.nav_back),
+                                )
+                            }
+                        }
+                        Text(
+                            title,
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                            style = MaterialTheme.typography.titleLarge,
+                        )
+                    }
+                }
+            } else TopAppBar(
                 title = {
                     Column {
                         Text(title, style = MaterialTheme.typography.titleLarge)
@@ -79,16 +131,26 @@ fun DevSampleScaffold(
             )
         }
     ) { innerPadding ->
+        val viewport = Modifier.fillMaxSize().padding(innerPadding)
+        val scroll = rememberScrollState()
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 20.dp, vertical = 16.dp)
-                .verticalScroll(rememberScrollState()),
+            modifier = if (responsive) {
+                viewport.consumeWindowInsets(innerPadding)
+                    .verticalScroll(scroll)
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            } else {
+                viewport.padding(horizontal = 20.dp, vertical = 16.dp).verticalScroll(scroll)
+            },
             verticalArrangement = Arrangement.spacedBy(12.dp),
-            content = content
-        )
-        Spacer(modifier = Modifier.height(8.dp))
+        ) {
+            if (responsive) {
+                subtitle?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            content()
+        }
+        if (!responsive) Spacer(modifier = Modifier.height(8.dp))
     }
 }
 
@@ -128,15 +190,17 @@ fun SessionTypeBanner(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun FlowStepIndicator(
     steps: List<String>,
     currentIndex: Int,
     modifier: Modifier = Modifier
 ) {
-    Row(
+    FlowRow(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         steps.forEachIndexed { index, label ->
             FilterChip(

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import time
@@ -13,7 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from .analyzer import Analyzer, AnalyzerError, build_analyzer, llm_wait_ms
+from .analyzer import Analyzer, AnalyzerError, analysis_source, build_analyzer, llm_wait_ms
 from .config import Settings, load_settings
 from .delivery_judge import judge_delivery
 from .hint_engine import hint_for_pause, match_part
@@ -91,8 +92,13 @@ def create_app(settings: Settings | None = None, analyzer: Analyzer | None = Non
             )
 
         llm_wait_ms.set(None)
+        analysis_source.set(None)
         try:
-            parts = await analyzer.analyze(script)
+            # 같은 Task에서 제한해 분석 출처·LLM 시간 ContextVar를 유지한다.
+            async with asyncio.timeout(settings.analysis_timeout_seconds):
+                parts = await analyzer.analyze(script)
+        except TimeoutError:
+            return _error(504, "analysis_timeout", "대본 분석 전체 대기 시간이 초과되었습니다. 잠시 후 다시 분석하세요.")
         except AnalyzerError as e:
             logger.warning("analysis failed: %s %s", e.code, e.message)
             return _error(e.status_code, e.code, e.message)
@@ -105,7 +111,7 @@ def create_app(settings: Settings | None = None, analyzer: Analyzer | None = Non
             # 폰은 자신이 보낸 원문(req.script)으로 해시를 계산해 비교한다.
             script_sha256=script_sha256,
             client_revision=req.client_revision,
-            analyzer=analyzer.name,
+            analyzer=analysis_source.get() or analyzer.name,
             parts=parts,
         )
 

@@ -80,6 +80,8 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
 
     private val meter = Pcm16Probe()
     private val detector = SilenceDetector()
+    private val vad = PcmVad(detector::onVoice)
+    private var hintSpeechRevisionAtShow = 0L
     private val _lastTiming = MutableStateFlow<RequestTiming?>(null)
     /** 마지막 서버 요청의 서버 처리·네트워크 시간. */
     val lastTiming: StateFlow<RequestTiming?> = _lastTiming.asStateFlow()
@@ -111,12 +113,13 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
         onState = { s ->
             _ui.value = _ui.value.copy(speech = s)
             // 띄운 키워드가 중간 결과에 들리면 확정 문장을 기다리지 않고 바로 숨긴다.
-            if (controller.onPartial(s.partial) && !renderer.hide()) controller.onHideFailed()
+            if (controller.onPartial(s.partial, hasSpeechAfterHint())) hideHint()
         },
         onFinal = { text ->
-            controller.onFinal(text)?.let(::requestDelivery)
-            // 멈춤이 먼저 감지되고 확정 문장이 늦게 온 경우, 그 문장으로 힌트를 요청한다.
-            if (pauseWaitingForText) {
+            val refreshPause = pauseWaitingForText || presentation.value.pauseInFlight
+            controller.onFinal(text, hasSpeechAfterHint())?.let(::requestDelivery)
+            // 같은 쉼에서 확정 결과가 늦게 오면 이전 요청을 버리고 최신 문장으로 다시 요청한다.
+            if (refreshPause) {
                 pauseWaitingForText = false
                 if (detector.isCurrentPause(waitingPauseRevision, SystemClock.elapsedRealtime())) {
                     controller.onPause()?.let(::requestPause)
@@ -134,8 +137,17 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
         override fun onAudioReceived(data: ByteArray?, offset: Int, length: Int) {
             if (!accepting.get() || mediaId != mediaGeneration) return
             val pcm = meter.accept(data, offset, length, SystemClock.elapsedRealtime()) ?: return
-            detector.onChunk(meter.snapshot().rms, SystemClock.elapsedRealtime())
-            speech.feed(pcm)
+            val failure = runCatching { vad.accept(pcm, SystemClock.elapsedRealtime(), mediaId) }.exceptionOrNull()
+            if (failure != null) {
+                viewModelScope.launch {
+                    if (accepting.get() && mediaId == mediaGeneration) {
+                        if (startGate.preparing) failStart(StartError.AudioFailed, "VAD: " + failure.message)
+                        else controller.halt(HaltReason.AudioStopped)
+                    }
+                }
+                return
+            }
+            if (accepting.get() && mediaId == mediaGeneration) speech.feed(pcm)
         }
 
         override fun onAudioError(errorCode: Int, errorInfo: String?) {
@@ -197,7 +209,7 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
                     if (request != null) requestPause(request)
                     else {
                         pauseWaitingForText = presentation.value.let {
-                            it.phase == PresentationPhase.Running && it.hint == null && !it.pauseInFlight
+                            it.phase == PresentationPhase.Running && it.hint == null && it.pendingHide == null && !it.pauseInFlight
                         }
                         waitingPauseRevision = detector.revision()
                     }
@@ -207,7 +219,7 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
                     controller.invalidatePause()
                 }
                 // 5초가 지난 키워드는 전달 판단과 관계없이 내린다.
-                if (controller.expireIfDue(now) && !renderer.hide()) controller.onHideFailed()
+                if (controller.expireIfDue(now)) hideHint()
                 val m = meter.snapshot()
                 _ui.value = _ui.value.copy(
                     receiving = accepting.get(),
@@ -238,6 +250,7 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
     }
 
     private fun refreshGlassView(now: Long) {
+        val wasOpened = _ui.value.glassOpened
         val link = app.sharedLink
         val opened = _ui.value.connected && app.isSessionReady && link != null &&
             runCatching { link.customViewIsOpen() }.getOrDefault(false)
@@ -256,6 +269,10 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
             },
         )
         if (finished) openingLink = null
+        // 종료 후 다른 화면의 표시를 지우지 않도록 자동 재시도는 현재 발표·중단 상태에만 적용한다.
+        val phase = presentation.value.phase
+        if (opened && !wasOpened && presentation.value.pendingHide != null &&
+            (phase == PresentationPhase.Running || phase == PresentationPhase.Halted)) hideHint()
         if (!opened && presentation.value.phase == PresentationPhase.Running) {
             controller.halt(HaltReason.GlassViewClosed)
         }
@@ -338,8 +355,13 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
             detector.reset()
             _ui.value = _ui.value.copy(startStage = StartStage.AudioAndStt)
             startupDeadlineMs = SystemClock.elapsedRealtime() + STARTUP_TIMEOUT_MS
+            val mediaId = ++mediaGeneration
+            val vadFailure = runCatching { vad.start(mediaId) }.exceptionOrNull()
+            if (vadFailure != null) {
+                failStart(StartError.AudioFailed, "VAD: " + vadFailure.message)
+                return@launch
+            }
             try {
-                val mediaId = ++mediaGeneration
                 link.setCXRAudioCbk(audioCallback(mediaId))
                 audioStartedAtMs = SystemClock.elapsedRealtime()
                 accepting.set(true)
@@ -367,12 +389,18 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
         val hasAudio = accepting.get() && (voice == VoiceStatus.Speaking || voice == VoiceStatus.Silent)
         val sttReady = _ui.value.speech.running && _ui.value.speech.ready
         if (startGate.complete(startTicket, hasAudio, sttReady)) {
+            // 준비 중 VAD의 프레임·발화 이력은 발표로 가져오지 않는다.
+            val vadFailure = runCatching { vad.start(mediaGeneration) }.exceptionOrNull()
+            if (vadFailure != null) {
+                failStart(StartError.AudioFailed, "VAD: " + vadFailure.message)
+                return
+            }
             // Preparation speech is not presentation content or a pause trigger.
             detector.reset()
             audioStartedAtMs = nowMs
             controller.start(preparedSha)
             _ui.value = _ui.value.copy(startStage = null)
-            if (!renderer.hide()) controller.onHideFailed()
+            hideHint()
         } else if (nowMs >= startupDeadlineMs) {
             failStart(if (!hasAudio) StartError.AudioMissing else StartError.SttTimeout, null)
         }
@@ -385,7 +413,7 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
         val hadHint = controller.stop()
         stopMedia()
         _ui.value = _ui.value.copy(startStage = null)
-        if (hadHint && !renderer.hide()) controller.onHideFailed()
+        if (hadHint) hideHint()
     }
 
     private fun failStart(error: StartError, detail: String?) {
@@ -397,12 +425,26 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
         mediaGeneration++
         pauseWaitingForText = false
         if (accepting.getAndSet(false)) runCatching { audioLink?.stopAudioStream() }
+        runCatching { vad.close() }
         // A restart keeps running=true. Preserve an already stopped recognizer error.
         if (_ui.value.speech.running) speech.cancel()
     }
 
+    fun retryHide() {
+        if (presentation.value.pendingHide != null) hideHint()
+    }
+
+    private fun hideHint() {
+        controller.requestHide()
+        if (renderer.hide()) controller.onHideSent() else controller.onHideFailed()
+    }
+
+    private fun hasSpeechAfterHint(): Boolean =
+        presentation.value.hint?.shownAtMs != null && detector.speechRevision() > hintSpeechRevisionAtShow
+
     private fun requestPause(request: PauseRequest) {
         val pauseRevision = detector.revision()
+        waitingPauseRevision = pauseRevision
         val requestServerUrl = serverUrl
         viewModelScope.launch {
             val outcome = client.pause(requestServerUrl, request)
@@ -412,6 +454,7 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
             } else outcome
             val shown = controller.completePause(request, currentOutcome) ?: return@launch
             val ackBefore = CustomViewAcks.last.value.seq
+            hintSpeechRevisionAtShow = detector.speechRevision()
             val sent = renderer.show(keywordLine(shown.hint.keywords))
             controller.onHintRendered(shown.id, sent, SystemClock.elapsedRealtime(), _ui.value.speech.partial)
             if (!sent) return@launch
@@ -419,14 +462,14 @@ class PresentationViewModel(application: Application) : AndroidViewModel(applica
             val ack = withTimeoutOrNull(GLASS_ACK_TIMEOUT_MS) {
                 CustomViewAcks.last.first { it.seq > ackBefore }
             }
-            controller.onHintAck(shown.id, ack?.let { it.error == null })
+            controller.onHintAck(shown.id, ack?.let { it.error == null }, SystemClock.elapsedRealtime())
         }
     }
 
     private fun requestDelivery(request: DeliveryRequest) {
         viewModelScope.launch {
             val outcome = client.delivery(serverUrl, request)
-            if (controller.completeDelivery(request, outcome) && !renderer.hide()) controller.onHideFailed()
+            if (controller.completeDelivery(request, outcome)) hideHint()
         }
     }
 

@@ -50,7 +50,7 @@ def test_gemini_request_and_parts_contract(gemini_settings, monkeypatch):
         fmt = payload["response_format"]
         assert fmt["type"] == "json_schema"
         item = fmt["json_schema"]["schema"]["properties"]["parts"]["items"]
-        assert set(item["required"]) == {"title", "keywords", "hint"}
+        assert set(item["required"]) == {"title", "keywords", "hint", "start_quote"}
         assert "발표 대본" in payload["messages"][1]["content"]
         parts = {"parts": [{"title": "소개", "keywords": ["발표"], "hint": "오늘 발표"}]}
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(parts)}}]})

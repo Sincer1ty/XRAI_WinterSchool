@@ -1,0 +1,3 @@
+-r requirements.txt
+keybert>=0.9,<1
+sentence-transformers>=3,<6

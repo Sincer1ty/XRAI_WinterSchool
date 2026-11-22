@@ -62,7 +62,11 @@ class ScriptPrepController {
 
     /** 파일에서 불러온 경우. */
     @Synchronized
-    fun loadScript(text: String, sourceName: String) = replaceScript(text, sourceName)
+    fun loadScript(text: String, sourceName: String, expectedRevision: Long? = null): Boolean {
+        if (expectedRevision != null && expectedRevision != _state.value.revision) return false
+        replaceScript(text, sourceName)
+        return true
+    }
 
     private fun replaceScript(text: String, sourceName: String?) {
         val cur = _state.value
@@ -154,7 +158,8 @@ class ScriptPrepController {
 
     /** 진행 중인 분석을 취소하고 편집 상태로 돌아간다. 이후 도착하는 결과는 버려진다. */
     @Synchronized
-    fun cancelAnalysis() {
+    fun cancelAnalysis(ticket: AnalysisTicket? = null) {
+        if (ticket != null && ticket.requestId != activeRequestId) return
         val cur = _state.value
         if (cur.phase != PrepPhase.Analyzing) return
         activeRequestId = null

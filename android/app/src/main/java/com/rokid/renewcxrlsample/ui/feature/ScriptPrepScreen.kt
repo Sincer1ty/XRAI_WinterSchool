@@ -17,7 +17,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -59,7 +59,33 @@ fun ScriptPrepScreen(
         title = stringResource(R.string.script_prep_title),
         subtitle = stringResource(R.string.script_prep_subtitle),
         showBack = true,
-        onBack = onBack
+        onBack = onBack,
+        responsive = true,
+        bottomBar = {
+            when {
+                analyzing -> OutlinedButton(onClick = viewModel::cancelAnalysis, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.script_prep_cancel))
+                }
+                state.phase == PrepPhase.Reviewing || state.isReady -> ReadyControls(
+                    state = state,
+                    onConfirm = {
+                        viewModel.confirmReady()
+                        if (viewModel.state.value.isReady) onReady()
+                    },
+                    onContinue = onReady,
+                )
+                else -> Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = viewModel::analyze,
+                    enabled = state.canSubmit && serverUrl.isNotBlank(),
+                ) {
+                    Text(stringResource(
+                        if (state.phase == PrepPhase.Editing) R.string.script_prep_analyze
+                        else R.string.script_prep_reanalyze,
+                    ))
+                }
+            }
+        },
     ) {
         FlowStepIndicator(
             steps = listOf(
@@ -139,12 +165,9 @@ fun ScriptPrepScreen(
             ) {
                 CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 3.dp)
                 Text(stringResource(R.string.script_prep_analyzing), modifier = Modifier.weight(1f))
-                OutlinedButton(onClick = viewModel::cancelAnalysis) {
-                    Text(stringResource(R.string.script_prep_cancel))
-                }
             }
-        } else {
-            Button(
+        } else if (state.phase == PrepPhase.Reviewing || state.isReady) {
+            OutlinedButton(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = viewModel::analyze,
                 enabled = state.canSubmit && serverUrl.isNotBlank()
@@ -163,14 +186,25 @@ fun ScriptPrepScreen(
         state.analysis?.let { analysis ->
             if (state.phase == PrepPhase.Reviewing || state.phase == PrepPhase.Ready) {
                 SceneSectionTitle(stringResource(R.string.script_prep_review_title, analysis.parts.size))
+                if (analysis.analyzer == "keybert") {
+                    PrerequisiteHint(stringResource(R.string.script_prep_local_analysis_notice))
+                }
                 if (state.phase == PrepPhase.Reviewing) {
                     PrerequisiteHint(stringResource(R.string.script_prep_review_hint))
                 }
                 analysis.parts.forEach { PartCard(it) }
-                ReadyControls(state = state, onConfirm = {
-                    viewModel.confirmReady()
-                    if (viewModel.state.value.isReady) onReady()
-                }, onContinue = onReady)
+                if (state.isReady) {
+                    ElevatedCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    ) {
+                        Text(
+                            stringResource(R.string.script_prep_ready_message),
+                            modifier = Modifier.padding(14.dp),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
+                }
             }
         }
     }
@@ -186,22 +220,12 @@ private fun ReadyControls(state: ScriptPrepState, onConfirm: () -> Unit, onConti
         Button(modifier = Modifier.fillMaxWidth(), onClick = onContinue) {
             Text(stringResource(R.string.presentation_continue))
         }
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-        ) {
-            Text(
-                stringResource(R.string.script_prep_ready_message),
-                modifier = Modifier.padding(14.dp),
-                color = MaterialTheme.colorScheme.onPrimaryContainer
-            )
-        }
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PartCard(part: ScriptPart) {
+internal fun PartCard(part: ScriptPart) {
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
@@ -209,17 +233,38 @@ private fun PartCard(part: ScriptPart) {
                 style = MaterialTheme.typography.titleSmall
             )
             Text(
+                stringResource(R.string.script_prep_part_body),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (part.body.isNotBlank()) {
+                Text(part.body, modifier = Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodyMedium)
+            } else {
+                PrerequisiteHint(stringResource(R.string.script_prep_part_body_unavailable))
+            }
+            Text(
                 stringResource(R.string.script_prep_part_keywords),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                part.keywords.forEach { SuggestionChip(onClick = {}, label = { Text(it) }) }
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                part.keywords.forEach { keyword ->
+                    Surface(
+                        shape = MaterialTheme.shapes.small,
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                    ) {
+                        Text(
+                            keyword,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
+                }
             }
-            Text(
-                stringResource(R.string.script_prep_part_hint, part.hint),
-                style = MaterialTheme.typography.bodyMedium
-            )
         }
     }
 }

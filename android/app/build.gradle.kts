@@ -62,5 +62,6 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     implementation("com.rokid.cxr:client-l:1.0.4")
+    implementation("com.github.gkonovalov.android-vad:webrtc:2.0.10")
 
 }

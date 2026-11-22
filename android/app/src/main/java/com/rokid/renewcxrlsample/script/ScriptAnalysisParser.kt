@@ -35,6 +35,9 @@ object ScriptAnalysisParser {
             val p = partsJson.optJSONObject(i) ?: throw ScriptFormatException("part $i invalid")
             val title = p.optStringStrict("title") ?: throw ScriptFormatException("part $i title missing")
             val hint = p.optStringStrict("hint") ?: throw ScriptFormatException("part $i hint missing")
+            val body = if (!p.has("body")) "" else {
+                p.opt("body") as? String ?: throw ScriptFormatException("part $i body invalid")
+            }
             val keywords = p.optJSONArray("keywords")?.stringsOrNull()
                 ?: throw ScriptFormatException("part $i keywords invalid")
             if (keywords.isEmpty()) throw ScriptFormatException("part $i keywords empty")
@@ -43,6 +46,7 @@ object ScriptAnalysisParser {
                 title = title,
                 keywords = keywords,
                 hint = hint,
+                body = body,
             )
         }
 

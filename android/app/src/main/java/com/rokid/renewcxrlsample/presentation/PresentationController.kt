@@ -57,6 +57,9 @@ data class ShownHint(
     val partialAtShow: String = "",
 )
 
+/** 숨김 전송이 성공할 때까지 안경에 남아 있을 수 있는 문구와 처리 결과를 보존한다. */
+data class PendingHintHide(val hint: ShownHint?, val note: PresentationNote?)
+
 data class PresentationState(
     val phase: PresentationPhase = PresentationPhase.Idle,
     val scriptSha256: String? = null,
@@ -64,6 +67,7 @@ data class PresentationState(
     /** 멈춤 판단에 보내는 확정 문장 (최대 [PresentationController.PAUSE_HISTORY]). */
     val history: List<String> = emptyList(),
     val hint: ShownHint? = null,
+    val pendingHide: PendingHintHide? = null,
     val pauseInFlight: Boolean = false,
     val haltReason: HaltReason? = null,
     val note: PresentationNote? = null,
@@ -109,6 +113,7 @@ class PresentationController {
         _state.value = PresentationState(
             phase = PresentationPhase.Running,
             scriptSha256 = scriptSha256,
+            pendingHide = _state.value.pendingHide?.copy(note = PresentationNote(NoteKind.Started)),
             note = PresentationNote(NoteKind.Started),
         )
         return true
@@ -117,16 +122,19 @@ class PresentationController {
     /** 발표 종료. 표시 중이던 힌트가 있었으면 true (호출자가 안경에서 지운다). */
     fun stop(): Boolean {
         val cur = _state.value
-        if (cur.phase == PresentationPhase.Idle || cur.phase == PresentationPhase.Stopped) return false
+        if (cur.phase == PresentationPhase.Idle || cur.phase == PresentationPhase.Stopped) return cur.pendingHide != null
         generation++
         pendingPauseId = null
         _state.value = cur.copy(
             phase = PresentationPhase.Stopped,
             hint = null,
+            pendingHide = if (cur.hint != null || cur.pendingHide != null) {
+                PendingHintHide(cur.hint ?: cur.pendingHide?.hint, PresentationNote(NoteKind.Stopped))
+            } else null,
             pauseInFlight = false,
             note = PresentationNote(NoteKind.Stopped),
         )
-        return cur.hint != null
+        return _state.value.pendingHide != null
     }
 
     /** 오류로 자동 판단 중지. 이후 응답은 버린다. 다시 하려면 종료 후 새로 시작한다. */
@@ -145,7 +153,7 @@ class PresentationController {
     }
 
     /** STT 확정 문장. 힌트가 떠 있으면 전달 판단 요청을 돌려준다. */
-    fun onFinal(text: String): DeliveryRequest? {
+    fun onFinal(text: String, allowDelivery: Boolean = true): DeliveryRequest? {
         val cur = _state.value
         val sentence = text.trim()
         if (cur.phase != PresentationPhase.Running || sentence.isEmpty()) return null
@@ -153,12 +161,16 @@ class PresentationController {
         invalidatePause()
         val recent = (cur.recentFinals + sentence).takeLast(RECENT_FINALS)
         val history = (cur.history + sentence).takeLast(PAUSE_HISTORY)
-        // 확정되면 중간 결과가 새로 시작되므로 기준을 비운다.
+        var fresh = ""
         val hint = cur.hint?.let {
-            it.copy(spokenSince = (it.spokenSince + sentence).takeLast(RECENT_FINALS), partialAtShow = "")
+            if (allowDelivery && it.shownAtMs != null) fresh = deliveryText(sentence, it.partialAtShow)
+            it.copy(
+                spokenSince = (it.spokenSince + listOfNotNull(fresh.takeIf(String::isNotEmpty))).takeLast(RECENT_FINALS),
+                partialAtShow = "",
+            )
         }
         _state.value = cur.copy(recentFinals = recent, history = history, hint = hint, pauseInFlight = false)
-        if (hint == null) return null
+        if (hint == null || fresh.isEmpty()) return null
         return DeliveryRequest(generation, hint.id, cur.scriptSha256!!, hint.hint, hint.spokenSince.joinToString(" "), ++latestDeliverySequence)
     }
 
@@ -171,7 +183,7 @@ class PresentationController {
      */
     fun onPause(partial: String = ""): PauseRequest? {
         val cur = _state.value
-        if (cur.phase != PresentationPhase.Running || cur.hint != null || cur.pauseInFlight) return null
+        if (cur.phase != PresentationPhase.Running || cur.hint != null || cur.pendingHide != null || cur.pauseInFlight) return null
         val pending = partial.trim().takeIf { it.isNotEmpty() && it != cur.history.lastOrNull() }
         val sentences = cur.history + listOfNotNull(pending)
         if (sentences.isEmpty()) return null
@@ -234,13 +246,16 @@ class PresentationController {
      * 표시 요청 뒤 안경 응답. [confirmed]: true 갱신 응답, false 오류 응답, null 제한 시간 내 응답 없음.
      * 오류면 힌트가 안 보인 것으로 되돌린다. 응답이 없으면 보였는지 모르므로 힌트·표시 시간은 유지한다.
      */
-    fun onHintAck(hintId: Long, confirmed: Boolean?) {
+    fun onHintAck(hintId: Long, confirmed: Boolean?, nowMs: Long? = null) {
         val cur = _state.value
         val hint = cur.hint
         if (cur.phase != PresentationPhase.Running || hint == null || hint.id != hintId) return
         val line = keywordLine(hint.hint.keywords)
         _state.value = when (confirmed) {
-            true -> cur.copy(note = PresentationNote(NoteKind.HintConfirmed, line))
+            true -> cur.copy(
+                hint = hint.copy(shownAtMs = nowMs ?: hint.shownAtMs),
+                note = PresentationNote(NoteKind.HintConfirmed, line),
+            )
             false -> cur.copy(hint = null, note = PresentationNote(NoteKind.HintShowFailed, line))
             null -> cur.copy(note = PresentationNote(NoteKind.HintNoAck, line))
         }
@@ -250,22 +265,27 @@ class PresentationController {
      * STT 중간 결과. 띄운 키워드가 들리면 확정 문장·서버 판단을 기다리지 않고 바로 전달로 본다 (true면 호출자가 숨긴다).
      * 서버 전달 판단과 같은 규칙(띄어쓰기 무시 부분 문자열)이다. 표시 전부터 이어진 중간 결과는 표시 뒤 덧붙은 부분만 본다.
      */
-    fun onPartial(partial: String): Boolean {
+    fun onPartial(partial: String, allowDelivery: Boolean = true): Boolean {
         val cur = _state.value
         val hint = cur.hint
-        if (cur.phase != PresentationPhase.Running || hint?.shownAtMs == null) return false
-        val text = partial.trim()
-        val fresh = if (hint.partialAtShow.isNotEmpty() && text.startsWith(hint.partialAtShow)) {
-            text.removePrefix(hint.partialAtShow)
-        } else text
-        val spoken = spokenNorm(fresh)
+        if (!allowDelivery || cur.phase != PresentationPhase.Running || hint?.shownAtMs == null) return false
+        val spoken = spokenNorm(deliveryText(partial, hint.partialAtShow))
         val heard = spoken.isNotEmpty() && hint.hint.keywords.any { kw ->
             spokenNorm(kw).let { it.isNotEmpty() && it in spoken }
         }
         if (!heard) return false
         latestDeliverySequence++ // 이 힌트에 대해 늦게 오는 서버 판단 응답은 버린다.
-        _state.value = cur.copy(hint = null, note = PresentationNote(NoteKind.Delivered, keywordLine(hint.hint.keywords)))
+        val note = PresentationNote(NoteKind.Delivered, keywordLine(hint.hint.keywords))
+        _state.value = cur.copy(hint = null, pendingHide = PendingHintHide(hint, note), note = note)
         return true
+    }
+
+    /** 표시 전 문장이 STT에서 고쳐졌다면 그 세그먼트는 보수적으로 제외한다. */
+    private fun deliveryText(text: String, baseline: String): String {
+        if (baseline.isBlank()) return text.trim()
+        val spoken = spokenNorm(text)
+        val before = spokenNorm(baseline)
+        return if (spoken.startsWith(before)) spoken.removePrefix(before) else ""
     }
 
     /** 표시 시간이 끝났으면 힌트를 내리고 true (호출자가 안경에서 지운다). 전달 완료로 기록하지 않는다. */
@@ -274,7 +294,8 @@ class PresentationController {
         val hint = cur.hint ?: return false
         val left = remainingMs(nowMs) ?: return false
         if (left > 0) return false
-        _state.value = cur.copy(hint = null, note = PresentationNote(NoteKind.HintExpired, keywordLine(hint.hint.keywords)))
+        val note = PresentationNote(NoteKind.HintExpired, keywordLine(hint.hint.keywords))
+        _state.value = cur.copy(hint = null, pendingHide = PendingHintHide(hint, note), note = note)
         return true
     }
 
@@ -291,9 +312,11 @@ class PresentationController {
             cur.phase != PresentationPhase.Running || request.sequence != latestDeliverySequence) return false
         return when (outcome) {
             DeliveryOutcome.Delivered -> {
+                val note = PresentationNote(NoteKind.Delivered, keywordLine(request.hint.keywords))
                 _state.value = cur.copy(
                     hint = null,
-                    note = PresentationNote(NoteKind.Delivered, keywordLine(request.hint.keywords)),
+                    pendingHide = PendingHintHide(cur.hint, note),
+                    note = note,
                 )
                 true
             }
@@ -309,10 +332,25 @@ class PresentationController {
         }
     }
 
-    /** 숨김 요청이 실패함. 안경에 이전 힌트가 남아 있을 수 있음을 알린다. */
-    fun onHideFailed() {
+    /** 시작 시 화면 비우기에도 사용한다. 새 표시 요청은 숨김 전송 성공까지 막는다. */
+    fun requestHide() {
+        if (_state.value.pendingHide != null) return
+        invalidatePause()
         val cur = _state.value
-        _state.value = cur.copy(note = PresentationNote(NoteKind.HideFailed))
+        _state.value = cur.copy(hint = null, pendingHide = PendingHintHide(cur.hint, cur.note))
+    }
+
+    /** SDK 전송 성공만 확인한다. 실제 안경 화면 반영은 기기에서 확인한다. */
+    fun onHideSent() {
+        val cur = _state.value
+        val pending = cur.pendingHide ?: return
+        _state.value = cur.copy(pendingHide = null, note = pending.note)
+    }
+
+    /** 실패해도 문구와 숨김 대기 상태를 보존한다. */
+    fun onHideFailed() {
+        requestHide()
+        _state.value = _state.value.copy(note = PresentationNote(NoteKind.HideFailed))
     }
 
     private fun haltForFailure(failure: PrepFailure) {

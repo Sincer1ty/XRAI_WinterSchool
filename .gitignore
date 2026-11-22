@@ -48,6 +48,9 @@ service-account*.json
 android-environment-backup-*.json
 *-backup-*/
 
+# Local KeyBERT model weights
+backend/models/
+
 # Python and frontend artifacts
 .venv/
 venv/

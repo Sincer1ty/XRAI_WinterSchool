@@ -17,13 +17,14 @@ class ScriptPart(BaseModel):
     index: int = Field(..., ge=1, description="1부터 시작하는 파트 순서")
     title: str = Field(..., min_length=1, description="파트 제목")
     keywords: list[str] = Field(..., min_length=1, description="파트의 필수 키워드 (1개 이상)")
-    hint: str = Field(..., min_length=1, description="안경에 띄울 짧은 힌트 (파트 첫 구절)")
+    hint: str = Field(..., min_length=1, description="파트 첫 구절 (대본 본문과 별도)")
+    body: str = Field(default="", description="서버가 원문에서 가져온 파트 본문 전체")
 
 
 class AnalyzeResponse(BaseModel):
     script_sha256: str = Field(..., description="분석한 대본(UTF-8)의 SHA-256 hex")
     client_revision: int | None = None
-    analyzer: str = Field(..., description="분석에 사용한 방식 (mock / openai / omniroute / gemini)")
+    analyzer: str = Field(..., description="분석에 사용한 방식 (mock / openai / omniroute / gemini / keybert)")
     parts: list[ScriptPart] = Field(..., min_length=1)
 
 

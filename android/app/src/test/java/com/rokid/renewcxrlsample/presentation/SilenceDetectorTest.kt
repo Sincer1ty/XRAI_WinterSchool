@@ -81,6 +81,24 @@ class SilenceDetectorTest {
     }
 
     @Test
+    fun vadSpeechDecisionDoesNotUseDiagnosticRmsThreshold() {
+        val d = SilenceDetector(speechRms = 1.0)
+        val before = d.speechRevision()
+        d.onVoice(true, 0)
+        assertEquals(VoiceStatus.Speaking, d.status(0))
+        assertTrue(d.speechRevision() > before)
+        val speaking = d.speechRevision()
+        d.onVoice(true, 20)
+        d.onVoice(false, 40)
+        assertEquals(speaking, d.speechRevision())
+        for (time in 60L..3_020L step 20) d.onVoice(false, time)
+        assertTrue(d.tick(3_020))
+        assertFalse(d.tick(3_020))
+        d.onVoice(true, 3_040)
+        assertTrue(d.speechRevision() > speaking)
+    }
+
+    @Test
     fun thresholdIsAdjustable() {
         val d = SilenceDetector(speechRms = 0.2)
         d.feed(0, 1_000, loud) // 0.1 < 0.2 → 발화 아님

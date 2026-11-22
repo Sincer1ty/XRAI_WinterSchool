@@ -204,16 +204,16 @@ def test_requests_without_llm_report_server_time_only():
 def test_keywords_shared_across_parts_are_dropped():
     script = "수업 발표가 어렵습니다. 대본을 봅니다. 그래서 발표 힌트 안경을 만들었습니다. 단서를 줍니다."
     parts = {"parts": [
-        {"title": "문제", "hint": "수업 발표가", "keywords": ["수업 발표", "대본"]},
-        {"title": "해결", "hint": "그래서", "keywords": ["발표", "힌트 안경", "단서"]},
-        {"title": "끝", "hint": "단서를", "keywords": ["단서"]},
+        {"title": "문제", "hint": "수업 발표가", "start_quote": "수업 발표가 어렵습니다.", "keywords": ["수업 발표", "대본"]},
+        {"title": "해결", "hint": "그래서", "start_quote": "그래서 발표 힌트 안경을 만들었습니다.", "keywords": ["발표", "힌트 안경", "단서"]},
+        {"title": "끝", "hint": "단서를", "start_quote": "단서를 줍니다.", "keywords": ["단서"]},
     ]}
     r = _llm_app(lambda req: _chat(json.dumps(parts, ensure_ascii=False))).post(
         "/api/v1/scripts/analyze", json={"script": script}
     )
     assert r.status_code == 200
     got = [p["keywords"] for p in r.json()["parts"]]
-    # "발표"는 "수업 발표"에 포함되어 양쪽에서 빠지고, "단서"는 두 파트에 있어 빠진다.
+    # "발표"는 "수업 발표"에 포함되어 양쪽에서 빠진다. "단서"는 2번 본문에 없어 그 파트에서 빠진다.
     # 빼면 키워드가 없는 마지막 파트는 원래 키워드를 유지한다.
     assert got == [["대본"], ["힌트 안경"], ["단서"]]
 
