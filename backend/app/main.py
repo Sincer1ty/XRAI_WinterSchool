@@ -132,7 +132,7 @@ def create_app(settings: Settings | None = None, analyzer: Analyzer | None = Non
         parts = prepared.get(req.script_sha256)
         if parts is None:
             return _not_prepared()
-        return hint_for_pause(req.script_sha256, parts, req.text)
+        return hint_for_pause(req.script_sha256, parts, req.text, req.last_part_index)
 
     @app.post("/api/v1/hints/delivery", response_model=DeliveryResponse, responses=match_errors)
     async def delivery(req: DeliveryRequest):

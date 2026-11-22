@@ -31,6 +31,9 @@ class AnalyzeResponse(BaseModel):
 class MatchRequest(BaseModel):
     script_sha256: str = Field(..., description="분석 응답의 script_sha256. 서버가 준비한 대본과 같아야 한다.")
     text: str = Field(..., description="폰 STT가 인식한 최근 문장(원문)")
+    last_part_index: int | None = Field(
+        None, description="멈춤 요청에서만: 폰이 마지막으로 띄운 힌트의 파트. 파트를 못 정하면 이 파트로 대신한다.",
+    )
 
 
 class MatchResponse(BaseModel):
@@ -42,7 +45,9 @@ class MatchResponse(BaseModel):
     part_index: int | None = Field(None, description="추정한 현재 파트. matched일 때만 값이 있다.")
     matched_keywords: list[str] = Field(default_factory=list)
     hint: str | None = Field(None, description="멈춤 응답에서만: 안경에 띄울 힌트")
-    hint_kind: Literal["remaining_keywords", "next_part"] | None = None
+    hint_kind: Literal["remaining_keywords", "next_part", "fallback_part"] | None = Field(
+        None, description="fallback_part: 파트를 못 정해 직전 힌트 파트(없으면 첫 파트)로 대신함",
+    )
     hint_part_index: int | None = Field(None, description="힌트가 속한 파트")
     hint_keywords: list[str] = Field(
         default_factory=list,

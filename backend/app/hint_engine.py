@@ -67,20 +67,35 @@ def match_part(script_sha256: str, parts: list[ScriptPart], text: str) -> MatchR
     return MatchResponse(**base, status="matched", part_index=parts[i].index, matched_keywords=said)
 
 
-def hint_for_pause(script_sha256: str, parts: list[ScriptPart], text: str) -> MatchResponse:
+def hint_for_pause(
+    script_sha256: str, parts: list[ScriptPart], text: str, last_part_index: int | None = None,
+) -> MatchResponse:
     """멈춤 직전 문장으로 현재 파트를 추정해 힌트를 고른다.
 
     기본 정책(팀 확정 필요): 현재 파트에서 아직 안 나온 키워드가 있으면 그 키워드,
-    모두 나왔으면 다음 파트의 첫 구절. 마지막 파트를 다 말했거나 파트 미확인이면 힌트 없음.
+    모두 나왔으면 다음 파트의 첫 구절. 마지막 파트를 다 말했으면 힌트 없음.
+    파트를 못 정하면(unknown·ambiguous) 폰이 마지막으로 띄운 힌트의 파트로 대신하고,
+    그런 파트가 없으면(발표 첫 부분) 첫 파트로 대신한다 (사용자 결정 2026-11-22).
     """
     result = match_part(script_sha256, parts, text)
-    if result.status != "matched":
-        return result
-    pos = next(i for i, p in enumerate(parts) if p.index == result.part_index)
+    if result.status == "matched":
+        pos = next(i for i, p in enumerate(parts) if p.index == result.part_index)
+        return _hint_from(result, parts, pos, "remaining_keywords")
+    # ponytail: 동점 후보와 관계없이 직전 파트로 대신한다. 키워드 없이 다음 파트로 넘어갔으면 이전 파트가 뜰 수 있다.
+    if last_part_index is None:
+        pos = 0
+    else:
+        pos = next((i for i, p in enumerate(parts) if p.index == last_part_index), None)
+        if pos is None:
+            return result
+    return _hint_from(result, parts, pos, "fallback_part")
+
+
+def _hint_from(result: MatchResponse, parts: list[ScriptPart], pos: int, kind: str) -> MatchResponse:
     remaining = [k for k in parts[pos].keywords if k not in result.matched_keywords]
     if remaining:
         return result.model_copy(
-            update={"hint": " · ".join(remaining), "hint_kind": "remaining_keywords",
+            update={"hint": " · ".join(remaining), "hint_kind": kind,
                     "hint_part_index": parts[pos].index, "hint_keywords": remaining}
         )
     if pos + 1 < len(parts):

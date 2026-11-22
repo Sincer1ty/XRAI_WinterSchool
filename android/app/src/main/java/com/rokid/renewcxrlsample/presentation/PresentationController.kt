@@ -71,9 +71,17 @@ data class PresentationState(
     val pauseInFlight: Boolean = false,
     val haltReason: HaltReason? = null,
     val note: PresentationNote? = null,
+    /** 서버가 마지막으로 준 힌트의 파트. 서버가 파트를 못 정하면 이 파트로 대신한다. 발표마다 초기화. */
+    val lastHintPartIndex: Int? = null,
 )
 
-data class PauseRequest(val generation: Long, val id: Long, val scriptSha256: String, val text: String)
+data class PauseRequest(
+    val generation: Long,
+    val id: Long,
+    val scriptSha256: String,
+    val text: String,
+    val lastPartIndex: Int? = null,
+)
 
 data class DeliveryRequest(
     val generation: Long,
@@ -189,7 +197,7 @@ class PresentationController {
         if (sentences.isEmpty()) return null
         // 서버가 최신 문장부터 파트를 판단하도록 문장을 줄바꿈으로 구분한다 (오래된 것 → 최신).
         val text = sentences.joinToString("\n") { it.replace('\n', ' ') }
-        val request = PauseRequest(generation, ++nextId, cur.scriptSha256!!, text)
+        val request = PauseRequest(generation, ++nextId, cur.scriptSha256!!, text, cur.lastHintPartIndex)
         pendingPauseId = request.id
         _state.value = cur.copy(pauseInFlight = true, note = PresentationNote(NoteKind.PauseRequested))
         return request
@@ -211,7 +219,11 @@ class PresentationController {
                 }
                 // 안경에 보이는 키워드로만 전달을 판단한다. 안 보이는 4·5번째 키워드를 말해 숨는 일을 막는다.
                 val shown = ShownHint(request.id, outcome.hint.copy(keywords = shownKeywords))
-                _state.value = cur.copy(pauseInFlight = false, hint = shown)
+                _state.value = cur.copy(
+                    pauseInFlight = false,
+                    hint = shown,
+                    lastHintPartIndex = outcome.hint.partIndex ?: cur.lastHintPartIndex,
+                )
                 shown
             }
             is PauseOutcome.NoHint -> {

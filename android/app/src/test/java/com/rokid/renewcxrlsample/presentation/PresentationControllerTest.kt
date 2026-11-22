@@ -481,6 +481,30 @@ class PresentationControllerTest {
         assertNotNull(c.onPause())
     }
 
+    @Test
+    fun pauseRequestCarriesLastHintPartUntilNextPresentation() {
+        val c = running()
+        c.onFinal("첫 문장")
+        val first = c.onPause()!!
+        assertNull("발표 첫 멈춤은 직전 파트 없음", first.lastPartIndex)
+        val shown = c.completePause(first, PauseOutcome.Hint(PauseHint("대본 · 불안", listOf("대본", "불안"), 2)))!!
+        c.onHintRendered(shown.id, sent = true, nowMs = SHOWN_AT)
+        assertTrue(c.expireIfDue(SHOWN_AT + PresentationController.HINT_VISIBLE_MS))
+        c.onHideSent()
+
+        c.onFinal("둘째 문장")
+        val second = c.onPause()!!
+        assertEquals(2, second.lastPartIndex)
+        c.completePause(second, PauseOutcome.NoHint("unknown"))
+        c.onFinal("셋째 문장")
+        assertEquals("힌트 없음 응답은 직전 파트를 지우지 않음", 2, c.onPause()!!.lastPartIndex)
+
+        c.stop()
+        c.start("sha")
+        c.onFinal("새 발표 문장")
+        assertNull("새 발표는 직전 파트를 가져오지 않음", c.onPause()!!.lastPartIndex)
+    }
+
     private companion object {
         const val SHOWN_AT = 10_000L
     }

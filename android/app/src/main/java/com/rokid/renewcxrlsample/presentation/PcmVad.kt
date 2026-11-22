@@ -41,8 +41,17 @@ internal class PcmVad(private val onVoice: (Boolean, Long) -> Unit) {
             sampleRate = SampleRate.SAMPLE_RATE_16K,
             frameSize = FrameSize.FRAME_SIZE_320,
             mode = Mode.NORMAL,
+            // 기본값 0이면 20 ms 소음 하나도 발화가 되어 받은 힌트를 pause_ended로 버린다.
+            speechDurationMs = MIN_SPEECH_MS,
+            // 0 유지: 올리면 3초 멈춤 판단이 그만큼 늦어진다.
+            silenceDurationMs = 0,
         )
         session = sessionId
+    }
+
+    private companion object {
+        /** 이 시간 이상 이어진 소리만 발화로 본다. 출발값, 실기기에서 조정 필요. */
+        const val MIN_SPEECH_MS = 200
     }
 
     @Synchronized

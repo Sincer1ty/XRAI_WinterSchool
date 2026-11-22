@@ -84,18 +84,21 @@ fun PresentationScreen(
         onBack = onBack,
         responsive = true,
         bottomBar = {
+            // 숨김 대기 중에도 새 발표를 시작할 수 있도록 재시도 버튼은 아래 버튼과 함께 보인다.
+            if (!preparing && !running && p.pendingHide != null && ui.glassOpened) {
+                OutlinedButton(
+                    onClick = viewModel::retryHide,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.presentation_retry_hide))
+                }
+            }
             when {
                 preparing || running -> OutlinedButton(
                     onClick = viewModel::stop,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(stringResource(if (preparing) R.string.presentation_cancel_start else R.string.presentation_stop))
-                }
-                p.pendingHide != null && ui.glassOpened -> OutlinedButton(
-                    onClick = viewModel::retryHide,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(stringResource(R.string.presentation_retry_hide))
                 }
                 !prep.isReady -> Button(onClick = onReviewScript, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.presentation_review_script))

@@ -260,10 +260,10 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env } # 기존 키 보존
 
 ### `POST /api/v1/parts/match` · `POST /api/v1/hints/pause`
 
-요청 (둘 다 같음)
+요청 (둘 다 같음. `last_part_index`는 `pause`에서만 쓰며 생략 가능)
 
 ```json
-{ "script_sha256": "<분석 응답의 script_sha256>", "text": "폰 STT가 인식한 최근 문장" }
+{ "script_sha256": "<분석 응답의 script_sha256>", "text": "폰 STT가 인식한 최근 문장", "last_part_index": 2 }
 ```
 
 성공 `200`
@@ -286,6 +286,7 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env } # 기존 키 보존
 - 추정 방식: 각 파트 키워드가 문장에 몇 개 나왔는지 공백을 무시하고 셉니다. 의역·동의어는 잡지 못합니다.
 - `match`는 `hint` 관련 값이 항상 `null`입니다. `pause`만 힌트를 고릅니다.
 - 멈춤 힌트 기본 정책 (**팀 확정 필요**): 현재 파트에서 아직 안 나온 키워드 → 없으면 다음 파트의 `hint` → 마지막 파트면 힌트 없음.
+- 파트를 못 정하면(`unknown`·`ambiguous`) `pause`는 `last_part_index`(폰이 마지막으로 띄운 힌트의 파트) 파트로 대신합니다. 값이 없으면(발표 첫 부분) 첫 파트로 대신합니다. 이때 `status`는 그대로이고 `hint_kind`가 `fallback_part`입니다. 없는 파트 번호면 힌트 없음. (사용자 결정 2026-11-22)
 - 분석한 대본은 서버 메모리에만 보관합니다. 서버를 재시작했거나 분석하지 않은 대본이면 `409 script_not_prepared`이며, 폰은 대본을 다시 분석해야 합니다.
 - `hint_keywords`: 전달 판단에 쓸 키워드. 남은 키워드 힌트면 그 키워드, 다음 파트 힌트면 다음 파트의 키워드입니다.
 - 중복 멈춤·발표 상태는 폰(`PresentationController`)이 관리합니다. 파트 순서 변경 정책은 미정입니다.

@@ -39,6 +39,7 @@ class HintServerClient(
 
     suspend fun pause(serverUrl: String, request: PauseRequest): PauseOutcome {
         val body = JSONObject().put("script_sha256", request.scriptSha256).put("text", request.text)
+        request.lastPartIndex?.let { body.put("last_part_index", it) }
         return when (val r = post(serverUrl, PAUSE_PATH, body)) {
             is Http.Ok -> parsePause(request.scriptSha256, r.body)
             is Http.Fail -> PauseOutcome.Failure(r.failure)

@@ -46,9 +46,45 @@ def test_pause_after_all_keywords_shows_next_part_opening():
     assert (r.hint, r.hint_kind, r.hint_part_index) == ("그래서 저희는", "next_part", 2)
 
 
-def test_pause_after_last_part_or_unknown_gives_no_hint():
+def test_pause_after_last_part_gives_no_hint():
     assert hint_for_pause(SHA, PARTS, "자신감과 힌트").hint is None
-    assert hint_for_pause(SHA, PARTS, "음...").hint is None
+
+
+def test_unknown_at_presentation_start_falls_back_to_first_part():
+    # 키워드를 하나도 말하기 전에 막혀도 첫 파트 키워드를 띄운다.
+    r = hint_for_pause(SHA, PARTS, "음...")
+    assert r.status == "unknown"
+    assert (r.hint, r.hint_kind, r.hint_part_index) == ("발표 불안 · 대본", "fallback_part", 1)
+    assert r.hint_keywords == ["발표 불안", "대본"]
+
+
+def test_unknown_falls_back_to_last_hint_part():
+    r = hint_for_pause(SHA, PARTS, "오늘 날씨가 좋네요", last_part_index=2)
+    assert (r.hint, r.hint_kind, r.hint_part_index) == ("스마트 안경 · 힌트", "fallback_part", 2)
+
+
+def test_ambiguous_falls_back_to_last_hint_part_without_said_keyword():
+    r = hint_for_pause(SHA, PARTS, "힌트를 보여줍니다", last_part_index=3)
+    assert r.status == "ambiguous"
+    assert (r.hint_keywords, r.hint_part_index) == (["자신감"], 3)
+
+
+def test_matched_part_wins_over_last_hint_part():
+    r = hint_for_pause(SHA, PARTS, "발표 불안 때문에 힘듭니다", last_part_index=3)
+    assert (r.hint, r.hint_kind, r.hint_part_index) == ("대본", "remaining_keywords", 1)
+
+
+def test_unknown_last_part_index_gives_no_hint():
+    assert hint_for_pause(SHA, PARTS, "음...", last_part_index=99).hint is None
+
+
+def test_pause_endpoint_passes_last_part_index():
+    client = _client()
+    analyzed = client.post("/api/v1/scripts/analyze", json={"script": "첫 문단 발표 불안\n\n둘째 문단 스마트 안경"}).json()
+    body = {"script_sha256": analyzed["script_sha256"], "text": "음...", "last_part_index": 2}
+    r = client.post("/api/v1/hints/pause", json=body)
+    assert r.status_code == 200
+    assert (r.json()["hint_kind"], r.json()["hint_part_index"]) == ("fallback_part", 2)
 
 
 def test_latest_sentence_wins_right_after_moving_to_next_part():
